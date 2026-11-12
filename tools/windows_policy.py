@@ -123,7 +123,7 @@ def pytest_runtest_call(item):
     outcome = yield
     # Surface asynchronous faults in the case that launched them. In particular,
     # an unsupported-feature exception must not hide a preceding CUDA failure.
-    if torch.cuda.is_initialized():
+    if torch.cuda.is_initialized() and torch.cuda.is_available():
         try:
             torch.cuda.synchronize()
         except Exception as error:

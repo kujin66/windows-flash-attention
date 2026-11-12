@@ -44,6 +44,22 @@ def test_recovery_keeps_failure_evidence_after_a_successful_retry(tmp_path, supe
     assert history[0]['details'] == 'illegal access'
 
 
+def test_acceptance_marks_exited_supervisor_and_pending_cases(tmp_path, supervisor, monkeypatch):
+    monkeypatch.setattr(supervisor, 'WORK', tmp_path)
+    folder = tmp_path / 'run'
+    report = folder / 'test_example'
+    report.mkdir(parents=True)
+    (tmp_path / 'status.json').write_text(json.dumps(dict(state='running', suite='full', folder=str(folder))))
+    records = [dict(event='collection', originals=100, representatives=3)]
+    records += [dict(event='report', nodeid='case', phase=p, outcome='passed') for p in ('setup', 'call', 'teardown')]
+    (report / 'events.jsonl').write_text('\n'.join(map(json.dumps, records)))
+    result = supervisor.acceptance_snapshot(False)
+    assert result['state'] == 'supervisor_exited'
+    assert result['passed'] is False
+    assert result['counts'] == {'passed': 1}
+    assert result['pending_collected'] == 2
+
+
 @pytest.mark.skipif(sys.platform != 'win32', reason='Windows launcher process-tree cleanup')
 def test_timeout_terminates_the_real_interpreter_child(tmp_path, supervisor):
     import ctypes
@@ -149,3 +165,17 @@ def test_unsupported_skip_cannot_hide_an_asynchronous_cuda_fault(policy, monkeyp
     with pytest.raises(StopIteration):
         hook.send(outcome)
     assert outcome.excinfo[1] is fault
+
+
+def test_cpu_mock_does_not_synchronize_an_initialized_cuda_context(policy, monkeypatch):
+    def synchronize():
+        pytest.fail('A CPU mock must not enter the CUDA device context')
+
+    cuda = SimpleNamespace(is_initialized=lambda: True, is_available=lambda: False,
+                           synchronize=synchronize)
+    monkeypatch.setitem(sys.modules, 'torch', SimpleNamespace(cuda=cuda))
+    outcome = SimpleNamespace(excinfo=None)
+    hook = policy.pytest_runtest_call(SimpleNamespace())
+    next(hook)
+    with pytest.raises(StopIteration):
+        hook.send(outcome)

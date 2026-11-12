@@ -54,7 +54,13 @@ The resumable loop saves source identity, wheel SHA256, logs, JUnit XML and
 fsynced per-phase JSONL evidence in agent_space/windows-native. A source/test/
 policy change creates a new report directory. status.json reports completion
 or needs_fix; a software failure exits nonzero after bounded retries. The loop
-resumes after timeouts while completed-case counts keep increasing. Timeout
+refreshes acceptance.json every 30 seconds with current outcomes, collected
+pending cases, historical failure counts and supervisor liveness. Pending counts
+exclude files not collected yet; the reported file total identifies that gap.
+Normal and exceptional exits write a final snapshot with supervisor_alive=false.
+Intentional CPU mocks are excluded from post-case CUDA synchronization; real
+CUDA cases still synchronize before unsupported-feature errors can become skips.
+The loop resumes after timeouts while completed-case counts keep increasing. Timeout
 cleanup terminates the entire Windows launcher/interpreter process tree.
 Each representative needs complete phase evidence; collection skips and all
 historical failed reports are retained in verification.json. Re-running a case

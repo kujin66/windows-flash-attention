@@ -1,5 +1,6 @@
 """Build the existing FA4 pyproject, install its wheel, resume real tests."""
 import argparse
+from collections import Counter
 import hashlib
 import json
 import os
@@ -7,6 +8,7 @@ from pathlib import Path
 import platform
 import subprocess
 import sys
+import threading
 import time
 
 REPO = Path(__file__).resolve().parents[1]
@@ -51,6 +53,45 @@ def write(path, value):
     temporary.replace(path)
 
 
+def acceptance_snapshot(alive):
+    status = json.loads((WORK / 'status.json').read_text(encoding='utf-8'))
+    folder = Path(status['folder'])
+    counts = Counter()
+    inventories = {}
+    historical_failures = 0
+    for events in folder.glob('test_*/events.jsonl'):
+        outcomes, history = case_results(events)
+        counts.update(outcomes.values())
+        historical_failures += len(history)
+        for line in events.read_text(encoding='utf-8').splitlines():
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if entry.get('event') == 'collection':
+                inventories[events.parent.name] = {key: entry[key] for key in ('originals', 'representatives')}
+    representatives = sum(value['representatives'] for value in inventories.values())
+    resolved = counts['passed'] + counts['skipped']
+    return dict(state=status['state'] if alive or status['state'] in ('completed', 'needs_fix', 'build_failed', 'supervisor_error') else 'supervisor_exited',
+                supervisor_alive=alive, supervisor_pid=os.getpid(),
+                passed=status['state'] == 'completed' and not counts['failed'] and not counts['incomplete'],
+                suite=status['suite'], counts=dict(counts), historical_failed_reports=historical_failures,
+                pending_collected=max(0, representatives - resolved), inventories=inventories,
+                test_files_total=len(list((REPO / 'tests/cute').glob('test_*.py'))) if status['suite'] == 'full' else 4,
+                test_files_reported=len(status.get('files', {})), source_report=str(folder),
+                updated_unix=time.time(),
+                scope='Resource-reduced representatives; hardware skips are not passes; see mapping and verification files')
+
+
+def monitor_acceptance(stop):
+    while not stop.is_set():
+        try:
+            write(WORK / 'acceptance.json', acceptance_snapshot(True))
+        except (OSError, ValueError, KeyError):
+            pass  # Status and event writers may be replacing a checkpoint.
+        stop.wait(30)
+
+
 def run(command, log, **kwargs):
     timeout = kwargs.pop('timeout', None)
     with log.open('w', encoding='utf-8') as output:
@@ -85,7 +126,22 @@ def main():
             lock.flush()
         lock.seek(0)
         msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-        return validate(args)
+        stop = threading.Event()
+        monitor = threading.Thread(target=monitor_acceptance, args=(stop,), daemon=True)
+        monitor.start()
+        try:
+            return validate(args)
+        except BaseException as error:
+            if (WORK / 'status.json').exists():
+                state = json.loads((WORK / 'status.json').read_text())
+                state.update(state='supervisor_error', error=repr(error))
+                write(WORK / 'status.json', state)
+            raise
+        finally:
+            stop.set()
+            monitor.join()
+            if (WORK / 'status.json').exists():
+                write(WORK / 'acceptance.json', acceptance_snapshot(False))
 
 
 def validate(args):
@@ -113,7 +169,8 @@ def validate(args):
     write(folder / 'manifest.json', dict(source_sha256=digest.hexdigest(),
           head=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=REPO, text=True).strip(),
           wheel=str(wheels[0]), wheel_sha256=hashlib.sha256(wheels[0].read_bytes()).hexdigest(),
-          python=sys.version, platform=platform.platform(), suite=args.suite))
+          python=sys.version, platform=platform.platform(), suite=args.suite,
+          git_status=subprocess.check_output(['git', 'status', '--short'], cwd=REPO, text=True)))
     env = os.environ.copy()
     env.update(PYTHONPATH=str(REPO / 'tools'), PYTHONUNBUFFERED='1',
                FLASH_ATTENTION_CUTE_DSL_CACHE_ENABLED='1',
