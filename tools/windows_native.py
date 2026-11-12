@@ -20,10 +20,17 @@ def write(path, value):
 
 
 def run(command, log, **kwargs):
+    timeout = kwargs.pop('timeout', None)
     with log.open('w', encoding='utf-8') as output:
+        worker = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT, **kwargs)
         try:
-            return subprocess.run(command, stdout=output, stderr=subprocess.STDOUT, **kwargs).returncode
+            return worker.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
+            # A Windows venv launcher has a real interpreter child. Kill the
+            # whole tree before starting another CUDA worker.
+            subprocess.run(['taskkill', '/PID', str(worker.pid), '/T', '/F'],
+                           stdout=output, stderr=subprocess.STDOUT, check=False)
+            worker.wait()
             output.write('\nWorker timeout; durable case reports will be recovered.\n')
             return 124
 
@@ -91,7 +98,9 @@ def validate(args):
         report = folder / path.stem
         report.mkdir(exist_ok=True)
         env['FA4_REPORT'] = str(report)
-        for attempt in range(args.max_attempts):
+        attempt = 0
+        previous_completed = -1
+        while attempt < args.max_attempts:
             write(WORK / 'status.json', dict(state='running', suite=args.suite, current=path.name,
                   folder=str(folder), files=summary))
             phases = {}
@@ -106,16 +115,20 @@ def validate(args):
                         phases.setdefault(e['nodeid'], {})[e['phase']] = e['outcome']
             done = [node for node, p in phases.items() if p.get('teardown') == 'passed' and
                     (p.get('call') == 'passed' or 'skipped' in p.values()) and 'failed' not in p.values()]
+            if len(done) > previous_completed:
+                attempt = 0
+            previous_completed = len(done)
+            attempt += 1
             write(report / 'done.json', done)
             env['FA4_DONE_FILE'] = str(report / 'done.json')
             code = run([sys.executable, '-m', 'pytest', str(path), '-p', 'windows_policy',
-                        '-q', '--tb=short', '--maxfail=1', f'--junitxml={report / (str(attempt) + ".xml")}'],
+                        '-q', '--tb=short', '--maxfail=1', f'--junitxml={report / (str(time.time_ns()) + ".xml")}'],
                        report / f'attempt-{time.time_ns()}.log', cwd=folder, env=env,
                        timeout=args.worker_seconds)
             summary[path.name] = dict(exitcode=code, previously_completed=len(done), report=str(report))
             write(WORK / 'status.json', dict(state='running', suite=args.suite, current=path.name,
                   folder=str(folder), files=summary))
-            print(path.name, 'attempt', attempt + 1, 'exit', code, flush=True)
+            print(path.name, 'attempt', attempt, 'exit', code, flush=True)
             if code in (0, 5):
                 break
         if code == 0 and args.suite == 'smoke' and path.name in ('test_windows_sm120.py', 'test_cuda_graph.py'):
