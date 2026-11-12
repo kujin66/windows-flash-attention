@@ -44,6 +44,7 @@ def audit(folder):
         invalid_records = 0
         latest_collection = None
         latest_finish = None
+        invalidations = []
         with required[1].open(encoding='utf-8') as stream:
             for line in stream:
                 try:
@@ -52,7 +53,15 @@ def audit(folder):
                     invalid_records += 1
                     continue
                 kind = entry.get('event')
-                if kind == 'report':
+                if kind == 'invalidate':
+                    expired = set(entry['nodeids'])
+                    if not expired <= expected or not entry.get('reason') or entry.get('source_sha256') != manifest['source_sha256']:
+                        file_issues.append('Invalid source-epoch invalidation record')
+                    for node in expired:
+                        phases.pop(node, None)
+                    invalidations.append(dict(cases=len(expired), reason=entry.get('reason'),
+                                              previous_source_sha256=entry.get('previous_source_sha256')))
+                elif kind == 'report':
                     node, phase = entry['nodeid'], entry['phase']
                     if phase == 'setup':
                         phases[node] = {}
@@ -99,7 +108,7 @@ def audit(folder):
             issues.append(dict(file=test.name, issues=file_issues))
         details[test.name] = dict(originals=len(mapping), representatives=len(expected),
                                   counts=dict(outcomes), historical_failed_reports=historical_failures,
-                                  collection_skips=collection_skips)
+                                  collection_skips=collection_skips, invalidations=invalidations)
         totals.update(outcomes)
     return dict(passed=not issues, source_sha256=fingerprint.hexdigest(),
                 files_expected=len(list((REPO / 'tests/cute').glob('test_*.py'))),

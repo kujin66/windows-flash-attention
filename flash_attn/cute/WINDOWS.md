@@ -75,6 +75,19 @@ evidence, source fingerprint and final session status. It writes
 Explicit module-level collection skips remain visible and contribute zero
 numerical passes. Its incomplete-evidence guards are covered by Windows CI.
 
+When a test contract changes, explicit source-epoch invalidation records require
+fresh phase evidence for the affected cases while retaining every historical
+report. Unchanged cases can resume after source comparison and provenance checks.
+
+The preallocated-output test permits adjacent storage values for nondeterministic
+dQ accumulation and checks both allocation paths against the dense suite's
+independent reference budget. It also checks NaN-poisoned output coverage and
+retains the original strict dK/dV comparison. The varlen oracle accumulates GQA
+head reductions in FP32, with unchanged numerical tolerances. Independent head
+groups are checkpointed so all original sequence, batch and head sizes remain
+covered at bounded reference-memory cost. Explicit-architecture fake tests supply
+their own target SM count instead of depending on matching local hardware.
+
 The SM80-derived backward path used on SM120 now aligns ragged GQA dK/dV
 scratch offsets to the same tile boundaries as its postprocess. The unchanged
 upstream varlen graph tests reproduce the former numerical error and validate

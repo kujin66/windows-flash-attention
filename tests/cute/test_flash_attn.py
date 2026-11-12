@@ -3254,9 +3254,9 @@ def test_flash_attn_bwd_preallocated_outputs(seqlen_q, seqlen_k, d, causal, dtyp
 
     dq_ref, dk_ref, dv_ref = _flash_attn_bwd(q, k, v, out, dout, lse, causal=causal)
 
-    dq = torch.empty_like(q)
-    dk = torch.empty_like(k)
-    dv = torch.empty_like(v)
+    dq = torch.full_like(q, float("nan"))
+    dk = torch.full_like(k, float("nan"))
+    dv = torch.full_like(v, float("nan"))
     dq_out, dk_out, dv_out = _flash_attn_bwd(
         q, k, v, out, dout, lse, causal=causal, dq=dq, dk=dk, dv=dv
     )
@@ -3266,9 +3266,29 @@ def test_flash_attn_bwd_preallocated_outputs(seqlen_q, seqlen_k, d, causal, dtyp
     assert dq_out is dq
     assert dk_out is dk
     assert dv_out is dv
-    assert torch.allclose(dq, dq_ref, atol=1e-5, rtol=1e-5)
+    # Atomic dQ accumulation can round to adjacent storage values across launches.
+    # Keep allocation equivalence tight and check mathematical accuracy separately.
+    previous = torch.nextafter(dq_ref, torch.full_like(dq_ref, -float("inf")))
+    following = torch.nextafter(dq_ref, torch.full_like(dq_ref, float("inf")))
+    adjacent = (dq >= previous) & (dq <= following)
+    assert torch.all(adjacent | torch.isclose(dq, dq_ref, atol=1e-5, rtol=1e-5))
     assert torch.allclose(dk, dk_ref, atol=1e-5, rtol=1e-5)
     assert torch.allclose(dv, dv_ref, atol=1e-5, rtol=1e-5)
+
+    inputs = tuple(t.detach().requires_grad_() for t in (q, k, v))
+    out_ref, _ = attention_ref(*inputs, causal=causal)
+    out_pt, _ = attention_ref(*inputs, causal=causal, upcast=False, reorder_ops=True)
+    gradients_ref = torch.autograd.grad(out_ref, inputs, dout)
+    gradients_pt = torch.autograd.grad(out_pt, inputs, dout)
+    # Use the same gradient error budget as test_flash_attn_output.
+    for expected, baseline, automatic, supplied in zip(
+        gradients_ref, gradients_pt, (dq_ref, dk_ref, dv_ref), (dq, dk, dv)
+    ):
+        atol = 2 * (expected + 0.3 - 0.3 - expected).abs().max().item()
+        bound = 2 * (baseline - expected).abs().max().item() + atol
+        for actual in (automatic, supplied):
+            assert torch.isfinite(actual).all()
+            assert (actual - expected).abs().max().item() <= bound
 
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16])

@@ -44,6 +44,24 @@ def test_recovery_keeps_failure_evidence_after_a_successful_retry(tmp_path, supe
     assert history[0]['details'] == 'illegal access'
 
 
+def test_source_invalidation_requires_a_fresh_run_and_keeps_failures(tmp_path, supervisor):
+    events = tmp_path / 'events.jsonl'
+    records = [dict(event='report', nodeid='changed', phase='call', outcome='failed')]
+    records += [dict(event='report', nodeid=node, phase=phase, outcome='passed')
+                for node in ('changed', 'unchanged') for phase in ('setup', 'call', 'teardown')]
+    records.append(dict(event='invalidate', nodeids=['changed'], reason='New reference oracle'))
+    events.write_text('\n'.join(map(json.dumps, records)))
+    outcomes, history = supervisor.case_results(events)
+    assert outcomes == {'unchanged': 'passed'}
+    assert len(history) == 1
+    records += [dict(event='report', nodeid='changed', phase=p, outcome='passed')
+                for p in ('setup', 'call', 'teardown')]
+    events.write_text('\n'.join(map(json.dumps, records)))
+    outcomes, history = supervisor.case_results(events)
+    assert outcomes == {'changed': 'passed', 'unchanged': 'passed'}
+    assert len(history) == 1
+
+
 def test_acceptance_marks_exited_supervisor_and_pending_cases(tmp_path, supervisor, monkeypatch):
     monkeypatch.setattr(supervisor, 'WORK', tmp_path)
     folder = tmp_path / 'run'

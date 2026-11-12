@@ -2,9 +2,9 @@ name: Windows x64 FA4 build
 on:
   workflow_dispatch:
   push:
-    paths: ['flash_attn/cute/**', 'tests/cute/test_windows*', 'tests/windows/**', 'tools/windows*', '.github/workflows/windows-fa4.yml']
+    paths: ['flash_attn/cute/**', 'tests/cute/**', 'tests/windows/**', 'tools/windows*', '.github/workflows/windows-fa4.yml']
   pull_request:
-    paths: ['flash_attn/cute/**', 'tests/cute/test_windows*', 'tests/windows/**', 'tools/windows*', '.github/workflows/windows-fa4.yml']
+    paths: ['flash_attn/cute/**', 'tests/cute/**', 'tests/windows/**', 'tools/windows*', '.github/workflows/windows-fa4.yml']
 permissions:
   contents: read
 jobs:

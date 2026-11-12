@@ -24,6 +24,10 @@ def case_results(events):
                 event = json.loads(line)
             except ValueError:
                 continue  # Recover complete records preceding a torn final write.
+            if event.get('event') == 'invalidate':
+                for node in event['nodeids']:
+                    phases.pop(node, None)
+                continue  # Source changes expire outcomes, never historical failures.
             if event.get('event') != 'report':
                 continue
             node, phase = event['nodeid'], event['phase']
