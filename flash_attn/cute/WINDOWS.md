@@ -88,6 +88,11 @@ groups are checkpointed so all original sequence, batch and head sizes remain
 covered at bounded reference-memory cost. Explicit-architecture fake tests supply
 their own target SM count instead of depending on matching local hardware.
 
+SM8x/SM120 validate the supported aligned head-dimension range before dispatch.
+Invalid dimensions raise a host-side assertion before any attention kernel can
+poison the CUDA context. CPU tests cover both dimensions and architecture paths;
+the native GPU suite retains the upstream invalid-input regression cases.
+
 The SM80-derived backward path used on SM120 now aligns ragged GQA dK/dV
 scratch offsets to the same tile boundaries as its postprocess. The unchanged
 upstream varlen graph tests reproduce the former numerical error and validate

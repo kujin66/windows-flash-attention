@@ -70,6 +70,9 @@ def test_invalidation_preserves_history_and_requires_current_phase_evidence(tmp_
     records = [dict(event='collection', originals=1, representatives=1),
                dict(event='report', nodeid='case0', phase='call', outcome='failed')]
     records += [dict(event='report', nodeid='case0', phase=p, outcome='passed') for p in ('setup', 'call', 'teardown')]
+    records.append(dict(event='invalidate', nodeids=['case0'], reason='Historical epoch',
+                        source_sha256='a' * 64, previous_source_sha256='previous'))
+    records += [dict(event='report', nodeid='case0', phase=p, outcome='passed') for p in ('setup', 'call', 'teardown')]
     records += [dict(event='sessionfinish', exitstatus=0),
                 dict(event='invalidate', nodeids=['case0'], reason='Changed oracle',
                      source_sha256=fingerprint, previous_source_sha256='previous')]
@@ -84,3 +87,4 @@ def test_invalidation_preserves_history_and_requires_current_phase_evidence(tmp_
     assert result['passed'] is True
     assert result['counts'] == {'passed': 1}
     assert result['files']['test_one.py']['historical_failed_reports'] == 1
+    assert len(result['files']['test_one.py']['invalidations']) == 2

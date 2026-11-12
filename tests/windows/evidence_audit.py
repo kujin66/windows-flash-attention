@@ -55,11 +55,14 @@ def audit(folder):
                 kind = entry.get('event')
                 if kind == 'invalidate':
                     expired = set(entry['nodeids'])
-                    if not expired <= expected or not entry.get('reason') or entry.get('source_sha256') != manifest['source_sha256']:
+                    target = entry.get('source_sha256', '')
+                    valid_digest = isinstance(target, str) and len(target) == 64 and all(c in '0123456789abcdef' for c in target)
+                    if not expired <= expected or not entry.get('reason') or not valid_digest:
                         file_issues.append('Invalid source-epoch invalidation record')
                     for node in expired:
                         phases.pop(node, None)
                     invalidations.append(dict(cases=len(expired), reason=entry.get('reason'),
+                                              source_sha256=target,
                                               previous_source_sha256=entry.get('previous_source_sha256')))
                 elif kind == 'report':
                     node, phase = entry['nodeid'], entry['phase']
@@ -73,6 +76,8 @@ def audit(folder):
                     collection_skips.append(entry['details'])
                 elif kind == 'sessionfinish':
                     latest_finish = entry['exitstatus']
+        if invalidations and invalidations[-1]['source_sha256'] != manifest['source_sha256']:
+            file_issues.append('Latest invalidation does not describe the current source epoch')
         outcomes = Counter()
         unresolved = {}
         for node in expected:
