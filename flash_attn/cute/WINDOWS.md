@@ -67,6 +67,14 @@ historical failed reports are retained in verification.json. Re-running a case
 resets its phase state so an interrupted retry cannot inherit an older pass.
 Skips are reported separately from passes. Fix reported software errors and rerun.
 
+Before certifying a full run, execute
+`python tests/windows/evidence_audit.py PATH_TO_FULL_REPORT`. The independent
+audit checks every current test file, representative mapping, complete phase
+evidence, source fingerprint and final session status. It writes
+`independent-audit.json` and exits nonzero for missing or inconsistent evidence.
+Explicit module-level collection skips remain visible and contribute zero
+numerical passes. Its incomplete-evidence guards are covered by Windows CI.
+
 The SM80-derived backward path used on SM120 now aligns ragged GQA dK/dV
 scratch offsets to the same tile boundaries as its postprocess. The unchanged
 upstream varlen graph tests reproduce the former numerical error and validate
