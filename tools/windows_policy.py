@@ -13,11 +13,13 @@ ROOT.mkdir(parents=True, exist_ok=True)
 EVENTS = (ROOT / 'events.jsonl').open('a', encoding='utf-8')
 DONE = set(json.loads(Path(os.environ['FA4_DONE_FILE']).read_text()))
 CAP = int(os.environ.get('FA4_SEQUENCE_CAP', '256'))
+MATRIX_PARAMETERS = {'causal', 'local_enum', 'has_learnable_sink', 'd',
+                     'deterministic', 'has_qv', 'seqlen_q', 'seqlen_k'}
 
 
 def matrix_skip(name, params, sm120, memory_limit):
     """Only source-proven exclusions of the two known upstream matrices."""
-    if name not in ('test_flash_attn_output', 'test_flash_attn_varlen_output'):
+    if name not in ('test_flash_attn_output', 'test_flash_attn_varlen_output') or not MATRIX_PARAMETERS <= params.keys():
         return None
     if params['causal'] and params['local_enum'] > 0:
         return 'upstream_skip: local and causal are excluded by the test body'
@@ -85,7 +87,8 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         params = getattr(getattr(item, 'callspec', None), 'params', {})
         original = dict(params)
-        if item.originalname in ('test_flash_attn_output', 'test_flash_attn_varlen_output'):
+        is_matrix = item.originalname in ('test_flash_attn_output', 'test_flash_attn_varlen_output') and MATRIX_PARAMETERS <= params.keys()
+        if is_matrix:
             for name in ('seqlen_q', 'seqlen_k'):
                 if params.get(name, 0) > CAP:
                     params[name] = CAP - 128 + (params[name] % 128 or 128)
@@ -131,6 +134,7 @@ def pytest_runtest_call(item):
         known = ('Learnable sink is not supported in this kernel',
                  'deterministic backward not supported on SM 12.0',
                  'SM120 forward does not support paged KV or block sparsity',
+                 'SM120 forward only supports num_splits=1',
                  'Block sparsity backward not supported on SM 12.0',
                  'score_mod backward not supported on SM 12.0',
                  'mask_mod backward not supported on SM 12.0')
@@ -138,7 +142,7 @@ def pytest_runtest_call(item):
             outcome.force_exception(pytest.skip.Exception('hardware_architecture: ' + message))
         elif isinstance(error, torch.OutOfMemoryError):
             effective = {}
-            for name in ('seqlen_q', 'seqlen_k'):
+            for name in ('seqlen_q', 'seqlen_k', 'seqlen', 'max_seq_len'):
                 value = item.funcargs.get(name)
                 if isinstance(value, int) and value > 128:
                     effective[name] = value % 128 or 128
@@ -150,6 +154,7 @@ def pytest_runtest_call(item):
                 torch.cuda.empty_cache()
                 try:
                     item.runtest()
+                    torch.cuda.synchronize()
                 except torch.OutOfMemoryError as smaller_error:
                     outcome.force_exception(pytest.skip.Exception('hardware_memory: OOM on smaller counterpart; ' + str(smaller_error)))
                 except BaseException as smaller_error:

@@ -10,7 +10,9 @@ python -m twine check flash_attn/cute/dist/*
 
 The Windows CI workflow is .github/workflows/windows-fa4.yml. It builds wheel
 and sdist with the same pyproject/backend as publish-fa4.yml, checks metadata,
-and uploads both artifacts. Hosted CI has no NVIDIA GPU; its build result
+and uploads both artifacts. CPU tests also exercise cross-process LockFileEx,
+launcher-tree timeout cleanup, checkpoint recovery and hardware-policy guards.
+Hosted CI has no NVIDIA GPU; its build result
 does not certify GPU kernels. CuTeDSL compiles those kernels at runtime.
 
 Install compatible native Windows CUDA PyTorch, CuTeDSL, QuACK, TVM FFI and
@@ -37,6 +39,11 @@ The full suite visits every tests/cute/test_*.py file. The two large attention
 matrices use sequence-length counterparts capped at 256 on this 8 GB device,
 retaining partial tile boundaries and every other parameter. mapping.json
 records every original ID, original parameters and representative counterpart.
+The matching matrix functions in the race-condition module use the same policy;
+the fast module has a different parameter schema and retains its own inputs.
+Source-proven unsupported matrix configurations and true upstream skipif marks
+are grouped by their exact exclusion reason, with every original ID retained.
+The varlen matrix's internal K-length override is normalized before grouping.
 It does not establish correctness for the original larger input sizes.
 Actual OOM gets a smaller sequence counterpart where the test exposes those
 arguments. Architecture skips require exact upstream SM120 feature rejections;
@@ -47,8 +54,12 @@ The resumable loop saves source identity, wheel SHA256, logs, JUnit XML and
 fsynced per-phase JSONL evidence in agent_space/windows-native. A source/test/
 policy change creates a new report directory. status.json reports completion
 or needs_fix; a software failure exits nonzero after bounded retries. The loop
-does not invent kernel fixes or relabel software failures as hardware limits.
-Re-run after fixing the reported error. Skips are reported separately from passes.
+resumes after timeouts while completed-case counts keep increasing. Timeout
+cleanup terminates the entire Windows launcher/interpreter process tree.
+Each representative needs complete phase evidence; collection skips and all
+historical failed reports are retained in verification.json. Re-running a case
+resets its phase state so an interrupted retry cannot inherit an older pass.
+Skips are reported separately from passes. Fix reported software errors and rerun.
 
 The SM80-derived backward path used on SM120 now aligns ragged GQA dK/dV
 scratch offsets to the same tile boundaries as its postprocess. The unchanged

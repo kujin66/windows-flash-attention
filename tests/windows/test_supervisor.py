@@ -97,6 +97,7 @@ def test_hardware_policy_does_not_skip_supported_or_unknown_cases(policy):
     params['deterministic'] = False
     assert policy.matrix_skip('test_flash_attn_varlen_output', params, True, 101376) is None
     assert policy.matrix_skip('unrelated_test', params, True, 101376) is None
+    assert policy.matrix_skip('test_flash_attn_output', {'causal': False, 'd': 128}, True, 101376) is None
 
 
 @pytest.mark.skipif(sys.platform != 'win32', reason='Native Windows LockFileEx')
