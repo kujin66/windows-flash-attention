@@ -13,6 +13,38 @@ REPO = Path(__file__).resolve().parents[1]
 WORK = REPO / 'agent_space' / 'windows-native'
 
 
+def case_results(events):
+    phases = {}
+    failures = []
+    if events.exists():
+        for line in events.read_text(encoding='utf-8').splitlines():
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue  # Recover complete records preceding a torn final write.
+            if event.get('event') != 'report':
+                continue
+            node, phase = event['nodeid'], event['phase']
+            if phase == 'setup':
+                phases[node] = {}  # A new attempt must not inherit old call/teardown.
+            phases.setdefault(node, {})[phase] = event['outcome']
+            if event['outcome'] == 'failed':
+                failures.append(event)
+    outcomes = {}
+    for node, value in phases.items():
+        if 'failed' in value.values():
+            outcomes[node] = 'failed'
+        elif value.get('teardown') != 'passed':
+            outcomes[node] = 'incomplete'
+        elif 'skipped' in value.values():
+            outcomes[node] = 'skipped'
+        elif value.get('call') == 'passed':
+            outcomes[node] = 'passed'
+        else:
+            outcomes[node] = 'incomplete'
+    return outcomes, failures
+
+
 def write(path, value):
     temporary = path.with_suffix('.tmp')
     temporary.write_text(json.dumps(value, indent=2), encoding='utf-8')
@@ -65,7 +97,7 @@ def validate(args):
     folder = WORK / (digest.hexdigest()[:16] + '-' + args.suite)
     folder.mkdir(exist_ok=True)
     write(WORK / 'status.json', dict(state='building', suite=args.suite, folder=str(folder)))
-    dist = folder / 'dist'
+    dist = folder / 'builds' / str(time.time_ns())
     code = run([sys.executable, '-m', 'build', '--no-isolation', '--outdir', str(dist)],
                folder / 'build.log', cwd=REPO / 'flash_attn/cute')
     if code:
@@ -103,18 +135,9 @@ def validate(args):
         while attempt < args.max_attempts:
             write(WORK / 'status.json', dict(state='running', suite=args.suite, current=path.name,
                   folder=str(folder), files=summary))
-            phases = {}
             events = report / 'events.jsonl'
-            if events.exists():
-                for line in events.read_text(encoding='utf-8').splitlines():
-                    try:
-                        e = json.loads(line)
-                    except ValueError:
-                        continue
-                    if e['event'] == 'report':
-                        phases.setdefault(e['nodeid'], {})[e['phase']] = e['outcome']
-            done = [node for node, p in phases.items() if p.get('teardown') == 'passed' and
-                    (p.get('call') == 'passed' or 'skipped' in p.values()) and 'failed' not in p.values()]
+            outcomes, _ = case_results(events)
+            done = [node for node, outcome in outcomes.items() if outcome in ('passed', 'skipped')]
             if len(done) > previous_completed:
                 attempt = 0
             previous_completed = len(done)
@@ -139,7 +162,25 @@ def validate(args):
                        report / 'warm.log', cwd=folder, env=env, timeout=args.worker_seconds)
             env.pop('FLASH_ATTENTION_TEST_EXPECT_CACHED')
             summary[path.name]['warm_exitcode'] = code
-        if code not in (0, 5):
+        outcomes, history = case_results(report / 'events.jsonl')
+        mapping = json.loads((report / 'mapping.json').read_text()) if (report / 'mapping.json').exists() else []
+        collection_skips = []
+        if (report / 'events.jsonl').exists():
+            for line in (report / 'events.jsonl').read_text().splitlines():
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                if entry.get('event') == 'collection_report' and entry['outcome'] == 'skipped':
+                    collection_skips.append(entry)
+        expected = {entry['representative'] for entry in mapping}
+        unresolved = {node: outcomes.get(node, 'missing') for node in expected
+                      if outcomes.get(node) not in ('passed', 'skipped')}
+        write(report / 'verification.json', dict(originals=len(mapping), representatives=len(expected),
+              counts={kind: list(outcomes.values()).count(kind) for kind in set(outcomes.values())},
+              unresolved=unresolved, historical_failed_reports=history, collection_skips=collection_skips))
+        summary[path.name].update(originals=len(mapping), representatives=len(expected), unresolved=len(unresolved))
+        if code not in (0, 5) or unresolved or (not mapping and not collection_skips):
             summary[path.name]['needs_fix'] = True
     failed = [p for p, r in summary.items() if r.get('needs_fix')]
     write(WORK / 'status.json', dict(state='needs_fix' if failed else 'completed',

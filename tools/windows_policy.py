@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,6 +13,32 @@ ROOT.mkdir(parents=True, exist_ok=True)
 EVENTS = (ROOT / 'events.jsonl').open('a', encoding='utf-8')
 DONE = set(json.loads(Path(os.environ['FA4_DONE_FILE']).read_text()))
 CAP = int(os.environ.get('FA4_SEQUENCE_CAP', '256'))
+
+
+def matrix_skip(name, params, sm120, memory_limit):
+    """Only source-proven exclusions of the two known upstream matrices."""
+    if name not in ('test_flash_attn_output', 'test_flash_attn_varlen_output'):
+        return None
+    if params['causal'] and params['local_enum'] > 0:
+        return 'upstream_skip: local and causal are excluded by the test body'
+    if not sm120:
+        return None
+    if params.get('has_learnable_sink'):
+        return 'hardware_architecture: Learnable sink is not supported in this kernel'
+    if params['d'] == 256:
+        from flash_attn.cute.config import select_initial_fwd_tile
+        m, n, _, _ = select_initial_fwd_tile(SimpleNamespace(
+            device_capacity=12, head_dim=256, requested_tile_m=None, requested_tile_n=None))
+        required = 2 * (m * 256 + n * (256 + 256))
+        if required > memory_limit:
+            return f'hardware_shared_memory: production tile {m}x{n} needs at least {required} bytes; device limit {memory_limit}'
+    # These branches actually execute backward in the unchanged upstream body.
+    backward = params['d'] in (64, 96, 128, 192) and not params.get('has_qv')
+    if name == 'test_flash_attn_output':
+        backward &= not ((params['causal'] or params['local_enum'] > 0) and params['seqlen_k'] < params['seqlen_q'])
+    if params['deterministic'] and backward:
+        return 'hardware_architecture: deterministic backward not supported on SM 12.0'
+    return None
 
 
 def emit(value):
@@ -49,6 +76,9 @@ def pytest_configure(config):
 
 
 def pytest_collection_modifyitems(config, items):
+    import torch
+    sm120 = torch.cuda.is_available() and torch.cuda.get_device_capability()[0] == 12
+    memory_limit = torch.cuda.get_device_properties(0).shared_memory_per_block_optin if sm120 else 0
     representatives = {}
     kept = []
     mapping = []
@@ -59,10 +89,21 @@ def pytest_collection_modifyitems(config, items):
             for name in ('seqlen_q', 'seqlen_k'):
                 if params.get(name, 0) > CAP:
                     params[name] = CAP - 128 + (params[name] % 128 or 128)
-        key = (str(item.path), item.originalname, repr(sorted(params.items())))
+            # The varlen test overwrites K length before seeding or allocating.
+            if item.originalname == 'test_flash_attn_varlen_output' and (params['causal'] or params['local_enum'] > 0):
+                params['seqlen_k'] = params['seqlen_q']
+        reason = matrix_skip(item.originalname, params, sm120, memory_limit)
+        if not reason:
+            for mark in item.iter_markers('skipif'):
+                if mark.args and not isinstance(mark.args[0], str) and mark.args[0]:
+                    reason = 'upstream_skipif: ' + mark.kwargs.get('reason', 'condition is true')
+                    break
+        if reason:
+            item.add_marker(pytest.mark.skip(reason=reason))
+        key = (str(item.path), item.originalname, reason or repr(sorted(params.items())))
         representative = representatives.setdefault(key, item.nodeid)
         mapping.append(dict(original=item.nodeid, representative=representative,
-                            original_params=original, effective_params=dict(params)))
+                            original_params=original, effective_params=dict(params), skip_reason=reason))
         if representative == item.nodeid and item.nodeid not in DONE:
             kept.append(item)
     (ROOT / 'mapping.json').write_text(json.dumps(mapping, default=str), encoding='utf-8')
@@ -77,6 +118,13 @@ def pytest_collection_modifyitems(config, items):
 def pytest_runtest_call(item):
     import torch
     outcome = yield
+    # Surface asynchronous faults in the case that launched them. In particular,
+    # an unsupported-feature exception must not hide a preceding CUDA failure.
+    if torch.cuda.is_initialized():
+        try:
+            torch.cuda.synchronize()
+        except Exception as error:
+            outcome.force_exception(error)
     if outcome.excinfo:
         error = outcome.excinfo[1]
         message = str(error)
@@ -114,7 +162,14 @@ def pytest_runtest_call(item):
 
 def pytest_runtest_logreport(report):
     emit(dict(event='report', nodeid=report.nodeid, phase=report.when, outcome=report.outcome,
+              wasxfail=str(getattr(report, 'wasxfail', '')),
               details=str(report.longrepr) if report.failed or report.skipped else None))
+
+
+def pytest_collectreport(report):
+    if report.failed or report.skipped:
+        emit(dict(event='collection_report', nodeid=report.nodeid, outcome=report.outcome,
+                  details=str(report.longrepr)))
 
 
 def pytest_sessionfinish(session, exitstatus):
