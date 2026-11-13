@@ -2,9 +2,9 @@ name: Windows native FA4 build
 on:
   workflow_dispatch:
   push:
-    paths: ['flash_attn/cute/**', 'tests/cute/**', 'tests/windows/**', 'tools/windows*', '.github/workflows/windows-fa4.yml']
+    paths: ['flash_attn/cute/**', 'tests/cute/**', 'tests/windows/**', 'tools/windows*', '.github/workflows/**']
   pull_request:
-    paths: ['flash_attn/cute/**', 'tests/cute/**', 'tests/windows/**', 'tools/windows*', '.github/workflows/windows-fa4.yml']
+    paths: ['flash_attn/cute/**', 'tests/cute/**', 'tests/windows/**', 'tools/windows*', '.github/workflows/**']
 permissions:
   contents: read
 jobs:
