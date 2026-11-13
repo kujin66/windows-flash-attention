@@ -10,8 +10,8 @@ from flash_attn.cute import flash_attn_func, flash_attn_varlen_func
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32"
     or not torch.cuda.is_available()
-    or torch.cuda.get_device_capability() != (12, 0),
-    reason="Native Windows SM120 acceptance",
+    or torch.cuda.get_device_capability()[0] != 12,
+    reason="Native Windows SM12x acceptance",
 )
 
 

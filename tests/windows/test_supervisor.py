@@ -230,3 +230,27 @@ def test_cpu_mock_does_not_synchronize_an_initialized_cuda_context(policy, monke
     next(hook)
     with pytest.raises(StopIteration):
         hook.send(outcome)
+
+
+def test_original_size_policy_retains_oom_failure(policy, monkeypatch):
+    monkeypatch.setattr(policy, 'CAP', 0)
+    cuda = SimpleNamespace(is_initialized=lambda: False, is_available=lambda: False)
+    monkeypatch.setitem(sys.modules, 'torch', SimpleNamespace(cuda=cuda, OutOfMemoryError=MemoryError))
+    error = MemoryError('original input cannot fit')
+    outcome = SimpleNamespace(excinfo=(MemoryError, error, None))
+    hook = policy.pytest_runtest_call(SimpleNamespace(funcargs={'seqlen_q': 8192}))
+    next(hook)
+    with pytest.raises(StopIteration):
+        hook.send(outcome)
+    assert outcome.excinfo[1] is error
+
+
+def test_exhausted_failure_does_not_block_remaining_cases(tmp_path, supervisor):
+    events = tmp_path / 'events.jsonl'
+    records = [dict(event='report', nodeid='bad', phase='call', outcome='failed')] * 3
+    records += [dict(event='report', nodeid='good', phase=p, outcome='passed') for p in ('setup', 'call', 'teardown')]
+    events.write_text('\n'.join(map(json.dumps, records)))
+    assert set(supervisor.completed_for_resume(events, 3)) == {'bad', 'good'}
+    outcomes, history = supervisor.case_results(events)
+    assert outcomes == {'bad': 'failed', 'good': 'passed'}
+    assert len(history) == 3

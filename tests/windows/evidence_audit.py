@@ -25,6 +25,19 @@ def audit(folder):
             fingerprint.update(path.read_bytes())
     if manifest['suite'] != 'full' or fingerprint.hexdigest() != manifest['source_sha256']:
         issues.append('Manifest does not describe full validation of current source')
+    architecture = manifest.get('architecture')
+    if architecture:
+        artifact_report = Path(manifest['wheel']).parent / 'source-audit.json'
+        if not artifact_report.exists():
+            issues.append('Missing wheel/sdist/installed source audit')
+        else:
+            artifacts = load(artifact_report)
+            if not artifacts.get('passed'):
+                issues.append('Distribution source audit failed')
+            for name in ('wheel', 'sdist'):
+                path = Path(artifacts[name])
+                if not path.exists() or hashlib.sha256(path.read_bytes()).hexdigest() != artifacts[name + '_sha256']:
+                    issues.append(f'{name} changed after source audit')
     for test in sorted((REPO / 'tests/cute').glob('test_*.py')):
         report = folder / test.stem
         required = [report / name for name in ('mapping.json', 'events.jsonl', 'verification.json')]
@@ -38,6 +51,9 @@ def audit(folder):
         file_issues = []
         if len(originals) != len(mapping) or not expected <= originals:
             file_issues.append('Mapping contains duplicate original IDs or invalid representatives')
+        if architecture and manifest.get('sequence_cap') == 0:
+            if any(row['original'] != row['representative'] or row['original_params'] != row['effective_params'] for row in mapping):
+                file_issues.append('Original-size run substituted or grouped test cases')
         phases = {}
         collection_skips = []
         historical_failures = 0
@@ -45,6 +61,7 @@ def audit(folder):
         latest_collection = None
         latest_finish = None
         invalidations = []
+        native_images = None
         with required[1].open(encoding='utf-8') as stream:
             for line in stream:
                 try:
@@ -76,6 +93,10 @@ def audit(folder):
                     collection_skips.append(entry['details'])
                 elif kind == 'sessionfinish':
                     latest_finish = entry['exitstatus']
+                elif kind == 'native_images':
+                    native_images = entry['images']
+                elif kind == 'native_architecture_failure':
+                    file_issues.append(dict(native_architecture_failure=entry['error']))
         if invalidations and invalidations[-1]['source_sha256'] != manifest['source_sha256']:
             file_issues.append('Latest invalidation does not describe the current source epoch')
         outcomes = Counter()
@@ -99,6 +120,10 @@ def audit(folder):
             file_issues.append(dict(invalid_jsonl_records=invalid_records))
         if latest_finish not in (0, 5):
             file_issues.append(dict(final_session_exitstatus=latest_finish))
+        if architecture:
+            allowed = {'0xaa64', '0xa641', '0xa64e'} if architecture in ('arm64', 'aarch64') else {'0x8664'}
+            if not native_images or any(image['machine'] not in allowed for image in native_images):
+                file_issues.append('Missing or non-native loaded-image evidence')
         if latest_collection is None or any(
             latest_collection.get(key) != value
             for key, value in (('originals', len(mapping)), ('representatives', len(expected)))
@@ -121,7 +146,8 @@ def audit(folder):
                 originals=sum(value['originals'] for value in details.values()),
                 representatives=sum(value['representatives'] for value in details.values()),
                 files=details, issues=issues, checked_unix=time.time(),
-                scope='Mapped resource counterparts; collection, hardware and dependency skips are not passes')
+                sequence_cap=manifest.get('sequence_cap'), architecture=architecture,
+                scope='Input sizes follow sequence_cap and mappings; collection, hardware and dependency skips are not passes')
 
 
 if __name__ == '__main__':

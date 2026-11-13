@@ -1,4 +1,4 @@
-# Native Windows x64
+# Native Windows x64 and ARM64
 
 FA4 uses its existing CuTeDSL package build, not the FA2 CUDA-extension build:
 
@@ -8,21 +8,31 @@ python -m build flash_attn/cute
 python -m twine check flash_attn/cute/dist/*
 ~~~
 
-The Windows CI workflow is .github/workflows/windows-fa4.yml. It builds wheel
+The Windows CI workflow is .github/workflows/windows-fa4.yml. Native x64 and
+ARM64 hosted runners build wheel
 and sdist with the same pyproject/backend as publish-fa4.yml, checks metadata,
-and uploads both artifacts. CPU tests also exercise cross-process LockFileEx,
+and upload both artifacts. The source audit compares every package Python file
+in wheel and sdist against the checkout, plus sdist metadata and this document.
+CPU tests also exercise cross-process LockFileEx,
 launcher-tree timeout cleanup, checkpoint recovery and hardware-policy guards.
 Hosted CI has no NVIDIA GPU; its build result
 does not certify GPU kernels. CuTeDSL compiles those kernels at runtime.
 
 Install compatible native Windows CUDA PyTorch, CuTeDSL, QuACK, TVM FFI and
-the package dependencies before running numerical tests. Initialize the x64
+the package dependencies before running numerical tests. Initialize the native
 Visual Studio toolchain using tools/windows-loop.ps1:
 
 ~~~powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/windows-loop.ps1 -Python ./agent_space/venv/Scripts/python.exe -Suite smoke
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/windows-loop.ps1 -Python ./agent_space/venv/Scripts/python.exe -Suite full
 ~~~
+
+The entry point selects an ARM64 host/target toolchain for ARM64 Python. For a
+custom Visual Studio installation, pass `-VcVarsBat PATH_TO_NATIVE_VCVARS_BAT`.
+It verifies the PE architecture and SHA256 of Python, cl, link, nvcc and ptxas,
+and records loaded native images at the end of each worker. ARM64EC/ARM64X
+Windows system libraries are recorded separately from native ARM64 extensions.
+SM120 and SM121 both run the Windows numerical smoke tests.
 
 The interpreter must be a dedicated environment: the loop installs a regular
 FA4 wheel into it. The local agent_space/venv reuses dependencies from the
@@ -35,8 +45,11 @@ dense and ragged attention and gradients, upstream CUDA graph replays and
 persistent-cache behavior. Separate warm processes prohibit new kernel
 compilation for the numerical files.
 
-The full suite visits every tests/cute/test_*.py file. The two large attention
-matrices use sequence-length counterparts capped at 256 on this 8 GB device,
+The full suite visits every tests/cute/test_*.py file. By default each original
+test ID executes with its original parameters (`-SequenceCap 0`), fake-tensor
+mode is disabled, and OOM remains a failure. No IDs are grouped in this mode.
+For an explicitly reduced run, `-SequenceCap 256` enables sequence-length
+counterparts for the two large attention matrices,
 retaining partial tile boundaries and every other parameter. mapping.json
 records every original ID, original parameters and representative counterpart.
 The matching matrix functions in the race-condition module use the same policy;
@@ -45,7 +58,7 @@ Source-proven unsupported matrix configurations and true upstream skipif marks
 are grouped by their exact exclusion reason, with every original ID retained.
 The varlen matrix's internal K-length override is normalized before grouping.
 It does not establish correctness for the original larger input sizes.
-Actual OOM gets a smaller sequence counterpart where the test exposes those
+In reduced mode, actual OOM gets a smaller sequence counterpart where the test exposes those
 arguments. Architecture skips require exact upstream SM120 feature rejections;
 shared-memory skips require the selected constructor's byte demand to exceed
 the measured device limit. Numerical and unclassified CUDA errors stay failures.
@@ -69,10 +82,13 @@ historical failed reports are retained in verification.json. Re-running a case
 resets its phase state so an interrupted retry cannot inherit an older pass.
 Skips are reported separately from passes. Fix reported software errors and rerun.
 
-Before certifying a full run, execute
+Exhausted failing cases retain failure evidence while remaining cases continue.
+They never become passes. The full loop automatically runs the independent audit
+before acceptance. It can also be run separately with
 `python tests/windows/evidence_audit.py PATH_TO_FULL_REPORT`. The independent
 audit checks every current test file, representative mapping, complete phase
-evidence, source fingerprint and final session status. It writes
+evidence, source fingerprint, native loaded images and final session status.
+For original-size runs it also rejects parameter substitutions or grouped IDs. It writes
 `independent-audit.json` and exits nonzero for missing or inconsistent evidence.
 Explicit module-level collection skips remain visible and contribute zero
 numerical passes. Its incomplete-evidence guards are covered by Windows CI.

@@ -51,6 +51,16 @@ def case_results(events):
     return outcomes, failures
 
 
+def completed_for_resume(events, max_attempts):
+    outcomes, history = case_results(events)
+    failures = Counter(entry['nodeid'] for entry in history)
+    # Exhausted failures remain failures in verification; excluding them lets
+    # every other original test run instead of repeatedly aborting one file.
+    return [node for node, outcome in outcomes.items()
+            if outcome in ('passed', 'skipped')
+            or (outcome == 'failed' and failures[node] >= max_attempts)]
+
+
 def write(path, value):
     temporary = path.with_suffix('.tmp')
     temporary.write_text(json.dumps(value, indent=2), encoding='utf-8')
@@ -84,7 +94,7 @@ def acceptance_snapshot(alive):
                 test_files_total=len(list((REPO / 'tests/cute').glob('test_*.py'))) if status['suite'] == 'full' else 4,
                 test_files_reported=len(status.get('files', {})), source_report=str(folder),
                 updated_unix=time.time(),
-                scope='Resource-reduced representatives; hardware skips are not passes; see mapping and verification files')
+                scope='See manifest.sequence_cap and mapping.json for input sizes; hardware skips are not passes')
 
 
 def monitor_acceptance(stop):
@@ -117,9 +127,13 @@ def main():
     parser.add_argument('--suite', choices=('smoke', 'full'), default='full')
     parser.add_argument('--max-attempts', type=int, default=3)
     parser.add_argument('--worker-seconds', type=int, default=1800)
+    parser.add_argument('--sequence-cap', type=int, default=0,
+                        help='Optional reduced matrix; 0 preserves every original input size')
     args = parser.parse_args()
-    if sys.platform != 'win32' or platform.machine().lower() not in ('amd64', 'x86_64'):
-        parser.error('This entry point validates native Windows x64 only')
+    if sys.platform != 'win32' or platform.machine().lower() not in ('amd64', 'x86_64', 'arm64', 'aarch64'):
+        parser.error('Native Windows x64 or ARM64 Python required')
+    if args.sequence_cap != 0 and args.sequence_cap < 128:
+        parser.error('--sequence-cap must be 0 or at least 128')
     if args.max_attempts < 1:
         parser.error('--max-attempts must be positive')
     WORK.mkdir(parents=True, exist_ok=True)
@@ -149,12 +163,16 @@ def main():
 
 
 def validate(args):
+    from windows_architecture import toolchain
+    tools = toolchain()
     digest = hashlib.sha256()
     for base in ('flash_attn/cute', 'tests/cute', 'tools'):
         for path in sorted((REPO / base).glob('*.py')):
             digest.update(str(path.relative_to(REPO)).encode())
             digest.update(path.read_bytes())
-    folder = WORK / (digest.hexdigest()[:16] + '-' + args.suite)
+    architecture = platform.machine().lower()
+    folder = WORK / (digest.hexdigest()[:16] + '-' + architecture + '-' + args.suite
+                     + f'-cap{args.sequence_cap}')
     folder.mkdir(exist_ok=True)
     write(WORK / 'status.json', dict(state='building', suite=args.suite, folder=str(folder)))
     dist = folder / 'builds' / str(time.time_ns())
@@ -174,14 +192,21 @@ def validate(args):
           head=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=REPO, text=True).strip(),
           wheel=str(wheels[0]), wheel_sha256=hashlib.sha256(wheels[0].read_bytes()).hexdigest(),
           python=sys.version, platform=platform.platform(), suite=args.suite,
+          architecture=architecture, sequence_cap=args.sequence_cap,
+          tools=tools,
           git_status=subprocess.check_output(['git', 'status', '--short'], cwd=REPO, text=True)))
     env = os.environ.copy()
     env.update(PYTHONPATH=str(REPO / 'tools'), PYTHONUNBUFFERED='1',
+               FLASH_ATTENTION_FAKE_TENSOR='0', FA4_SEQUENCE_CAP=str(args.sequence_cap),
                FLASH_ATTENTION_CUTE_DSL_CACHE_ENABLED='1',
-               FLASH_ATTENTION_CUTE_DSL_CACHE_DIR=str(WORK / 'kernel-cache'))
+               FLASH_ATTENTION_CUTE_DSL_CACHE_DIR=str(WORK / (architecture + '-kernel-cache')))
     probe = 'import sys; from pathlib import Path; import flash_attn.cute as m; print(m.__file__); assert Path(m.__file__).is_relative_to(Path(sys.prefix))'
     if run([sys.executable, '-c', probe], folder / 'import.log', cwd=folder, env=env):
         raise SystemExit('Installed FA4 wheel import failed; inspect import.log')
+    if run([sys.executable, REPO / 'tools/windows_artifacts.py', '--dist', str(dist),
+            '--installed', str(Path(sys.prefix) / 'Lib/site-packages/flash_attn/cute')],
+           folder / 'source-audit.log', cwd=folder, env=env):
+        raise SystemExit('Wheel/sdist/installed sources differ')
     paths = sorted((REPO / 'tests/cute').glob('test_*.py'))
     if args.suite == 'smoke':
         names = ('test_windows_filelock.py', 'test_windows_sm120.py', 'test_cuda_graph.py', 'test_cache_utils.py')
@@ -197,8 +222,7 @@ def validate(args):
             write(WORK / 'status.json', dict(state='running', suite=args.suite, current=path.name,
                   folder=str(folder), files=summary))
             events = report / 'events.jsonl'
-            outcomes, _ = case_results(events)
-            done = [node for node, outcome in outcomes.items() if outcome in ('passed', 'skipped')]
+            done = completed_for_resume(events, args.max_attempts)
             if len(done) > previous_completed:
                 attempt = 0
             previous_completed = len(done)
@@ -246,7 +270,16 @@ def validate(args):
     failed = [p for p, r in summary.items() if r.get('needs_fix')]
     write(WORK / 'status.json', dict(state='needs_fix' if failed else 'completed',
           suite=args.suite, folder=str(folder), failed_files=failed, files=summary,
-          scope='Resource-reduced counterparts plus unchanged remaining tests; skips are not passes'))
+          scope=('Original input sizes' if not args.sequence_cap else 'Resource-reduced counterparts')
+                + '; hardware skips are not passes'))
+    if args.suite == 'full':
+        audit_code = run([sys.executable, REPO / 'tests/windows/evidence_audit.py', str(folder)],
+                         folder / 'independent-audit.log', cwd=folder, env=env)
+        if audit_code:
+            state = json.loads((WORK / 'status.json').read_text())
+            state.update(state='needs_fix', independent_audit_exitcode=audit_code)
+            write(WORK / 'status.json', state)
+            return 1
     return 1 if failed else 0
 
 

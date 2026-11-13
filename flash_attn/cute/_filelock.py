@@ -48,9 +48,9 @@ def flock(fd: int, operation: int) -> None:
     if operation == LOCK_UN:
         ok = _kernel32.UnlockFileEx(handle, 0, 1, 0, ctypes.byref(overlapped))
     else:
-        if operation & ~(LOCK_SH | LOCK_EX | LOCK_NB) or bool(
-            operation & LOCK_SH
-        ) == bool(operation & LOCK_EX):
+        if operation & ~(LOCK_SH | LOCK_EX | LOCK_NB) or bool(operation & LOCK_SH) == bool(
+            operation & LOCK_EX
+        ):
             raise ValueError("Specify exactly one of LOCK_SH or LOCK_EX")
         flags = (1 if operation & LOCK_NB else 0) | (2 if operation & LOCK_EX else 0)
         ok = _kernel32.LockFileEx(handle, flags, 0, 1, 0, ctypes.byref(overlapped))

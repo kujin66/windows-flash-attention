@@ -13,7 +13,7 @@ ROOT = Path(os.environ['FA4_REPORT'])
 ROOT.mkdir(parents=True, exist_ok=True)
 EVENTS = (ROOT / 'events.jsonl').open('a', encoding='utf-8')
 DONE = set(json.loads(Path(os.environ['FA4_DONE_FILE']).read_text()))
-CAP = int(os.environ.get('FA4_SEQUENCE_CAP', '256'))
+CAP = int(os.environ.get('FA4_SEQUENCE_CAP', '0'))
 MATRIX_PARAMETERS = {'causal', 'local_enum', 'has_learnable_sink', 'd',
                      'deterministic', 'has_qv', 'seqlen_q', 'seqlen_k'}
 
@@ -89,7 +89,7 @@ def pytest_collection_modifyitems(config, items):
         params = getattr(getattr(item, 'callspec', None), 'params', {})
         original = dict(params)
         is_matrix = item.originalname in ('test_flash_attn_output', 'test_flash_attn_varlen_output') and MATRIX_PARAMETERS <= params.keys()
-        if is_matrix:
+        if is_matrix and CAP:
             for name in ('seqlen_q', 'seqlen_k'):
                 if params.get(name, 0) > CAP:
                     params[name] = CAP - 128 + (params[name] % 128 or 128)
@@ -104,7 +104,9 @@ def pytest_collection_modifyitems(config, items):
                     break
         if reason:
             item.add_marker(pytest.mark.skip(reason=reason))
-        key = (str(item.path), item.originalname, reason or repr(sorted(params.items())))
+        # Original-size validation executes each ID, including each explicit skip.
+        key = ((str(item.path), item.originalname, reason or repr(sorted(params.items())))
+               if CAP else item.nodeid)
         representative = representatives.setdefault(key, item.nodeid)
         mapping.append(dict(original=item.nodeid, representative=representative,
                             original_params=original, effective_params=dict(params), skip_reason=reason))
@@ -148,6 +150,8 @@ def pytest_runtest_call(item):
         if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] == 12 and any(s in message for s in known):
             outcome.force_exception(pytest.skip.Exception('hardware_architecture: ' + message))
         elif isinstance(error, torch.OutOfMemoryError):
+            if not CAP:
+                return  # Original-size validation must retain OOM as a failure.
             effective = {}
             for name in ('seqlen_q', 'seqlen_k', 'seqlen', 'max_seq_len'):
                 value = item.funcargs.get(name)
@@ -185,5 +189,13 @@ def pytest_collectreport(report):
 
 
 def pytest_sessionfinish(session, exitstatus):
+    import sys
+    if sys.platform == 'win32':
+        from windows_architecture import loaded_images
+        try:
+            emit(dict(event='native_images', images=loaded_images()))
+        except Exception as error:
+            emit(dict(event='native_architecture_failure', error=repr(error)))
+            session.exitstatus = exitstatus = 1
     emit(dict(event='sessionfinish', exitstatus=exitstatus))
     EVENTS.close()
