@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import shutil
 import subprocess
 import sys
 import threading
@@ -13,6 +14,51 @@ import time
 
 REPO = Path(__file__).resolve().parents[1]
 WORK = REPO / 'agent_space' / 'windows-native'
+
+
+def source_fingerprint():
+    digest = hashlib.sha256()
+    for base in ('flash_attn/cute', 'tests/cute', 'tools'):
+        for path in sorted((REPO / base).glob('*.py')):
+            digest.update(str(path.relative_to(REPO)).encode())
+            digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def resume_evidence(previous, folder, args, fingerprint):
+    previous = previous.resolve()
+    manifest = json.loads((previous / 'manifest.json').read_text(encoding='utf-8'))
+    if (manifest.get('git_status') or manifest['suite'] != args.suite
+            or manifest.get('sequence_cap') != args.sequence_cap
+            or manifest.get('architecture') != platform.machine().lower()):
+        raise RuntimeError('Resume requires a clean recorded checkout, matching suite, architecture and input sizes')
+    # Only orchestration may change. Numerical sources, test contracts, policy
+    # and native/source audit implementations must match the recorded commit.
+    protected = ('flash_attn/cute/*.py', 'flash_attn/cute/pyproject.toml',
+                 'tests/cute/*.py', 'tools/windows_policy.py',
+                 'tools/windows_architecture.py', 'tools/windows_artifacts.py',
+                 'tests/windows/evidence_audit.py')
+    difference = subprocess.check_output(['git', 'diff', manifest['head'], '--', *protected], cwd=REPO, text=True)
+    if difference:
+        raise RuntimeError('Resume rejected: numerical sources, tests or validation policy changed')
+    if previous == folder.resolve():
+        return
+    epoch = dict(event='invalidate', nodeids=[], source_sha256=fingerprint,
+                 previous_source_sha256=manifest['source_sha256'],
+                 reason='Verified unchanged numerical sources/tests/policy; orchestration-only continuation')
+    for report in previous.glob('test_*'):
+        target = folder / report.name
+        if target.exists():
+            continue  # A current-epoch run always takes precedence over old evidence.
+        shutil.copytree(report, target)
+        events = target / 'events.jsonl'
+        if events.exists():
+            with events.open('a', encoding='utf-8') as output:
+                output.write(json.dumps(epoch) + '\n')
+                output.flush()
+                os.fsync(output.fileno())
+    write(folder / 'source-epoch.json', dict(previous=str(previous), previous_manifest=manifest,
+          current_source_sha256=fingerprint, protected_paths=protected, source_difference=difference))
 
 
 def case_results(events):
@@ -129,6 +175,11 @@ def main():
     parser.add_argument('--worker-seconds', type=int, default=1800)
     parser.add_argument('--sequence-cap', type=int, default=0,
                         help='Optional reduced matrix; 0 preserves every original input size')
+    parser.add_argument('--resume-from', type=Path, help='Resume an orchestration-only source epoch after source comparison')
+    parser.add_argument('--watch', action='store_true', help='Rebuild and validate when source changes; retain failed evidence')
+    parser.add_argument('--poll-seconds', type=int, default=30)
+    parser.add_argument('--draft-pr', action='store_true', help='After full acceptance and matching final CI, create a Draft PR only')
+    parser.add_argument('--github-repo', default='kujin66/windows-flash-attention')
     args = parser.parse_args()
     if sys.platform != 'win32' or platform.machine().lower() not in ('amd64', 'x86_64', 'arm64', 'aarch64'):
         parser.error('Native Windows x64 or ARM64 Python required')
@@ -136,6 +187,10 @@ def main():
         parser.error('--sequence-cap must be 0 or at least 128')
     if args.max_attempts < 1:
         parser.error('--max-attempts must be positive')
+    if args.poll_seconds < 5:
+        parser.error('--poll-seconds must be at least 5')
+    if args.draft_pr and (args.suite != 'full' or args.sequence_cap):
+        parser.error('Draft PR requires full original-size validation')
     WORK.mkdir(parents=True, exist_ok=True)
     import msvcrt
     with (WORK / 'loop.lock').open('a+b') as lock:
@@ -148,7 +203,22 @@ def main():
         monitor = threading.Thread(target=monitor_acceptance, args=(stop,), daemon=True)
         monitor.start()
         try:
-            return validate(args)
+            previous = None
+            while True:
+                current = source_fingerprint()
+                if current != previous:
+                    code = validate(args)
+                    args.resume_from = None
+                    previous = current
+                    if code == 0 and args.draft_pr:
+                        from windows_finalize import finalize
+                        state = json.loads((WORK / 'status.json').read_text())
+                        finalize(Path(state['folder']), args.github_repo)
+                        return 0
+                    if not args.watch:
+                        return code
+                    print('Validation passed; watching sources' if code == 0 else 'Needs fixes; watching source changes', flush=True)
+                time.sleep(args.poll_seconds)
         except BaseException as error:
             if (WORK / 'status.json').exists():
                 state = json.loads((WORK / 'status.json').read_text())
@@ -165,13 +235,9 @@ def main():
 def validate(args):
     from windows_architecture import toolchain
     tools = toolchain()
-    digest = hashlib.sha256()
-    for base in ('flash_attn/cute', 'tests/cute', 'tools'):
-        for path in sorted((REPO / base).glob('*.py')):
-            digest.update(str(path.relative_to(REPO)).encode())
-            digest.update(path.read_bytes())
+    fingerprint = source_fingerprint()
     architecture = platform.machine().lower()
-    folder = WORK / (digest.hexdigest()[:16] + '-' + architecture + '-' + args.suite
+    folder = WORK / (fingerprint[:16] + '-' + architecture + '-' + args.suite
                      + f'-cap{args.sequence_cap}')
     folder.mkdir(exist_ok=True)
     write(WORK / 'status.json', dict(state='building', suite=args.suite, folder=str(folder)))
@@ -188,7 +254,7 @@ def validate(args):
     if run([sys.executable, '-m', 'pip', 'install', '--no-deps', '--ignore-installed', str(wheels[0])],
            folder / 'install.log'):
         raise SystemExit('Wheel installation failed')
-    write(folder / 'manifest.json', dict(source_sha256=digest.hexdigest(),
+    write(folder / 'manifest.json', dict(source_sha256=fingerprint,
           head=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=REPO, text=True).strip(),
           wheel=str(wheels[0]), wheel_sha256=hashlib.sha256(wheels[0].read_bytes()).hexdigest(),
           python=sys.version, platform=platform.platform(), suite=args.suite,
@@ -207,6 +273,8 @@ def validate(args):
             '--installed', str(Path(sys.prefix) / 'Lib/site-packages/flash_attn/cute')],
            folder / 'source-audit.log', cwd=folder, env=env):
         raise SystemExit('Wheel/sdist/installed sources differ')
+    if getattr(args, 'resume_from', None):
+        resume_evidence(args.resume_from, folder, args, fingerprint)
     paths = sorted((REPO / 'tests/cute').glob('test_*.py'))
     if args.suite == 'smoke':
         names = ('test_windows_filelock.py', 'test_windows_sm120.py', 'test_cuda_graph.py', 'test_cache_utils.py')
@@ -218,13 +286,15 @@ def validate(args):
         env['FA4_REPORT'] = str(report)
         attempt = 0
         previous_completed = -1
-        while attempt < args.max_attempts:
+        while True:
             write(WORK / 'status.json', dict(state='running', suite=args.suite, current=path.name,
                   folder=str(folder), files=summary))
             events = report / 'events.jsonl'
             done = completed_for_resume(events, args.max_attempts)
             if len(done) > previous_completed:
                 attempt = 0
+            elif attempt >= args.max_attempts:
+                break  # Collection failures or a worker with no durable progress.
             previous_completed = len(done)
             attempt += 1
             write(report / 'done.json', done)

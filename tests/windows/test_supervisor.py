@@ -254,3 +254,57 @@ def test_exhausted_failure_does_not_block_remaining_cases(tmp_path, supervisor):
     outcomes, history = supervisor.case_results(events)
     assert outcomes == {'bad': 'failed', 'good': 'passed'}
     assert len(history) == 3
+
+
+def test_full_loop_visits_case_after_exhausted_failure(tmp_path, supervisor, monkeypatch):
+    monkeypatch.setattr(supervisor, 'REPO', tmp_path)
+    monkeypatch.setattr(supervisor, 'WORK', tmp_path / 'work')
+    supervisor.WORK.mkdir()
+    tests = tmp_path / 'tests/cute'
+    tests.mkdir(parents=True)
+    (tests / 'test_one.py').write_text('# synthetic worker')
+    monkeypatch.setitem(sys.modules, 'windows_architecture', SimpleNamespace(toolchain=lambda: []))
+    attempts = []
+
+    def worker(command, log, **kwargs):
+        if 'build' in command:
+            dist = Path(command[command.index('--outdir') + 1])
+            dist.mkdir(parents=True)
+            (dist / 'test.whl').write_bytes(b'synthetic wheel')
+        elif 'pytest' in command:
+            env = kwargs['env']
+            report = Path(env['FA4_REPORT'])
+            done = json.loads(Path(env['FA4_DONE_FILE']).read_text())
+            node = 'bad' if 'bad' not in done else 'good'
+            attempts.append(node)
+            mapping = [dict(original=n, representative=n) for n in ('bad', 'good')]
+            (report / 'mapping.json').write_text(json.dumps(mapping))
+            with (report / 'events.jsonl').open('a') as output:
+                for phase in ('setup', 'call', 'teardown'):
+                    outcome = 'failed' if node == 'bad' and phase == 'call' else 'passed'
+                    output.write(json.dumps(dict(event='report', nodeid=node, phase=phase, outcome=outcome)) + '\n')
+            return 1 if node == 'bad' else 0
+        return 0
+
+    monkeypatch.setattr(supervisor, 'run', worker)
+    monkeypatch.setattr(supervisor.subprocess, 'check_output', lambda *a, **k: 'synthetic-head')
+    args = SimpleNamespace(suite='full', sequence_cap=0, max_attempts=3, worker_seconds=10)
+    assert supervisor.validate(args) == 1
+    assert attempts == ['bad', 'bad', 'bad', 'good']
+    state = json.loads((supervisor.WORK / 'status.json').read_text())
+    verification = json.loads((Path(state['folder']) / 'test_one/verification.json').read_text())
+    assert verification['unresolved'] == {'bad': 'failed'}
+    assert verification['counts'] == {'failed': 1, 'passed': 1}
+
+
+def test_resume_rejects_changed_numerical_sources(tmp_path, supervisor, monkeypatch):
+    previous = tmp_path / 'old'
+    previous.mkdir()
+    import platform
+    manifest = dict(git_status='', suite='full', sequence_cap=0, architecture=platform.machine().lower(), head='old-head')
+    (previous / 'manifest.json').write_text(json.dumps(manifest))
+    monkeypatch.setattr(supervisor.subprocess, 'check_output', lambda *a, **k: 'changed kernel')
+    args = SimpleNamespace(suite='full', sequence_cap=0)
+    with pytest.raises(RuntimeError, match='numerical sources'):
+        supervisor.resume_evidence(previous, tmp_path / 'new', args, 'a' * 64)
+    assert not (tmp_path / 'new').exists()

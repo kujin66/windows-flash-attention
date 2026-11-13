@@ -3,7 +3,10 @@ param(
     [ValidateSet('smoke', 'full')][string]$Suite = 'full',
     [int]$MaxAttempts = 3,
     [int]$SequenceCap = 0,
-    [string]$VcVarsBat = ''
+    [string]$VcVarsBat = '',
+    [switch]$Watch,
+    [switch]$DraftPR,
+    [string]$ResumeFrom = ''
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -30,5 +33,9 @@ if ($VcVarsBat) {
 }
 $env:PYTHONNOUSERSITE = '1'
 $env:PYTHONUNBUFFERED = '1'
-& $Python (Join-Path $PSScriptRoot 'windows_native.py') --suite $Suite --max-attempts $MaxAttempts --sequence-cap $SequenceCap
+$loopArgs = @((Join-Path $PSScriptRoot 'windows_native.py'), '--suite', $Suite, '--max-attempts', $MaxAttempts, '--sequence-cap', $SequenceCap)
+if ($Watch) { $loopArgs += '--watch' }
+if ($DraftPR) { $loopArgs += '--draft-pr' }
+if ($ResumeFrom) { $loopArgs += @('--resume-from', $ResumeFrom) }
+& $Python @loopArgs
 exit $LASTEXITCODE

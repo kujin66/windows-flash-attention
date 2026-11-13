@@ -34,6 +34,24 @@ and records loaded native images at the end of each worker. ARM64EC/ARM64X
 Windows system libraries are recorded separately from native ARM64 extensions.
 SM120 and SM121 both run the Windows numerical smoke tests.
 
+For a persistent loop that creates a Draft PR only after full acceptance and
+matching final x64/ARM64 CI artifacts:
+
+~~~powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/windows-loop.ps1 -Python ./agent_space/arm64-venv/Scripts/python.exe -Suite full -Watch -DraftPR -VcVarsBat PATH_TO_NATIVE_VCVARS_BAT
+~~~
+
+The loop retries interrupted workers, preserves exhausted failures, and watches
+for source changes when fixes are needed. `-ResumeFrom OLD_REPORT_DIRECTORY`
+can continue after orchestration-only changes: a clean recorded commit and
+unchanged package sources, upstream tests, policy and audit implementations are
+required. Source comparison and epoch history are saved; changed numerical
+sources always need a fresh run. Before finalization, commit all source changes
+and authenticate `gh` in the account running the loop. The optional finalizer
+records the completed matrix, pushes the development branch, requires both
+final-head CI jobs, independently audits downloaded artifacts, and creates only
+a Draft PR. It contains no merge step.
+
 The interpreter must be a dedicated environment: the loop installs a regular
 FA4 wheel into it. The local agent_space/venv reuses dependencies from the
 existing native-stack environment through explicit .pth entries; this is not
