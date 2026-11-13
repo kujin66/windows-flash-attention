@@ -32,6 +32,36 @@ To stop weekly betas: GitHub repo → Actions → "Publish flash-attn-4 to PyPI"
 
 ## Guardrails
 
+FA4 Windows CI builds on a native x64 (`windows-latest`) runner with x64
+Python 3.12. It runs CPU-only Windows regressions, uses the existing PEP 517
+package build, checks metadata, and uploads `windows-x64-flash-attn-4`.
+This hosted job certifies packaging and CPU behavior, not CUDA execution.
+
+Local Windows CUDA tests are available in `windows-fa4-gpu.yml` through manual
+dispatch with `smoke` or `full`. Register the local runner with labels
+`self-hosted`, `Windows`, `X64`, `fa4-gpu`, and set repository variable
+`FA4_GPU_PYTHON` to a dedicated runner venv Python. That environment needs
+the FA4 CUDA dependencies, build, twine, pytest, setuptools and setuptools-scm;
+the host needs NVIDIA drivers, CUDA and MSVC x64 tools. The job installs its
+built wheel into this venv.
+
+GPU runs are serialized, use separate caches and reports per invocation, and
+upload logs and numerical evidence on success or failure. Smoke includes
+cold/warm cache tests; full also requires independent evidence auditing.
+Hardware skips and resource-reduced cases remain explicit. This manual job
+does not run automatically for pull requests or gate releases.
+
+The same entry point can run locally without a registered runner:
+
+```powershell
+./tools/windows-loop.ps1 -Python ./agent_space/venv/Scripts/python.exe -Suite smoke -WorkDir ./agent_space/windows-local-gpu-smoke
+```
+
+FA4 release runs reuse this workflow against the resolved release tag. Windows
+x64 validation must pass before GitHub Release creation or PyPI publication.
+The existing Linux build supplies the single universal wheel and sdist used
+for publishing; Windows artifacts remain separate validation outputs.
+
 - Do not use `v*` tags for FA4 releases.
 - Do not use `fa4-v*` tags for FA2 releases.
 - Keep `flash_attn/cute/pyproject.toml` tag parsing in sync with the FA4 tag prefix.

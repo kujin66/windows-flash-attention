@@ -21,6 +21,19 @@ the validated Python fingerprint; final-head CI must be checked separately.
 CI uses the existing PEP 517 package build and checks CPU supervisor tests and
 package metadata; it does not execute CUDA kernels.
 
+CI/CD follow-up: the Windows x64 workflow is now reusable by the existing
+FA4 publishing workflow and validates the resolved release tag before GitHub
+Release creation or PyPI publication. A separate manually dispatched local
+GPU workflow exposes smoke/full runs, isolated report/cache directories, and
+failure-evidence uploads. The repository had no registered self-hosted runner
+when checked; its GitHub GPU execution is not yet certified. These workflow
+and supervisor changes postdate the full matrix fingerprint above. The full
+counts describe that recorded source epoch, not a rerun of the new supervisor.
+Production attention and cache Python code is unchanged by this CI follow-up.
+The follow-up CPU regression suite passed 40 tests (including isolated CLI
+report-directory coverage). Actionlint passed for all three changed Windows
+and release workflows, with the documented custom fa4-gpu runner label allowed.
+
 ## Windows changes
 
 - `_filelock.py`: native LockFileEx locking; `cache_utils.py`: Windows fallback

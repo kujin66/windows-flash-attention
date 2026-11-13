@@ -113,11 +113,15 @@ def run(command, log, **kwargs):
 
 
 def main():
+    global WORK
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--suite', choices=('smoke', 'full'), default='full')
     parser.add_argument('--max-attempts', type=int, default=3)
     parser.add_argument('--worker-seconds', type=int, default=1800)
+    parser.add_argument('--work-dir', type=Path, default=WORK,
+                        help='Isolated checkpoint, cache and evidence directory')
     args = parser.parse_args()
+    WORK = args.work_dir.resolve()
     if sys.platform != 'win32' or platform.machine().lower() not in ('amd64', 'x86_64'):
         parser.error('This entry point validates native Windows x64 only')
     if args.max_attempts < 1:

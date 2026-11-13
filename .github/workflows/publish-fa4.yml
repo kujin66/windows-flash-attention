@@ -78,8 +78,16 @@ jobs:
         name: python-package-distributions
         path: flash_attn/cute/dist/
 
+  windows-validation:
+    needs: prepare-release
+    permissions:
+      contents: read
+    uses: ./.github/workflows/windows-fa4.yml
+    with:
+      ref: ${{ needs.prepare-release.outputs.release_tag }}
+
   github-release:
-    needs: [prepare-release, build]
+    needs: [prepare-release, build, windows-validation]
     runs-on: ubuntu-latest
     steps:
     - name: Download distribution packages
@@ -96,7 +104,7 @@ jobs:
         prerelease: ${{ contains(needs.prepare-release.outputs.release_tag, '.beta') }}
 
   publish-to-pypi:
-    needs: build
+    needs: [build, windows-validation]
     runs-on: ubuntu-latest
     environment:
       name: pypi

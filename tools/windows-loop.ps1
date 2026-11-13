@@ -1,7 +1,8 @@
 param(
     [string]$Python = 'python',
     [ValidateSet('smoke', 'full')][string]$Suite = 'full',
-    [int]$MaxAttempts = 3
+    [int]$MaxAttempts = 3,
+    [string]$WorkDir = ''
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -13,5 +14,7 @@ if (Test-Path $vswhere) {
         Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
     }
 }
-& $Python (Join-Path $PSScriptRoot 'windows_native.py') --suite $Suite --max-attempts $MaxAttempts
+$loopArgs = @('--suite', $Suite, '--max-attempts', $MaxAttempts)
+if ($WorkDir) { $loopArgs += @('--work-dir', $WorkDir) }
+& $Python (Join-Path $PSScriptRoot 'windows_native.py') @loopArgs
 exit $LASTEXITCODE
