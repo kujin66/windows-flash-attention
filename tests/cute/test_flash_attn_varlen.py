@@ -4,7 +4,11 @@ import pytest
 
 import torch
 import torch.nn.functional as F
+from torch.nn.attention import SDPBackend, sdpa_kernel
+from torch.utils.checkpoint import checkpoint
 from flash_attn.cute import flash_attn_varlen_func
+
+torch.backends.cuda.matmul.allow_tf32 = False
 
 IS_SM100 = torch.cuda.is_available() and torch.cuda.get_device_capability()[0] == 10
 
@@ -367,6 +371,16 @@ def torch_flash_ref(
     hcseq_k = cu_seqlens_k.to(device='cpu')
 
     outs = []
+
+    def reference_group(q_heads, k_head, v_head):
+        # Reduce all query heads sharing a KV head in FP32 before casting gradients.
+        with sdpa_kernel(SDPBackend.MATH):
+            return F.scaled_dot_product_attention(
+                q_heads.float(), k_head.float(), v_head.float(),
+                attn_mask=None, dropout_p=0.0, is_causal=causal,
+                scale=softmax_scale, enable_gqa=q_heads.shape[1] != k_head.shape[1],
+            ).to(dtype)
+
     for b in range(B):
         if hcseq_q is not None:
             q_start, q_end = int(hcseq_q[b]), int(hcseq_q[b+1])
@@ -386,14 +400,14 @@ def torch_flash_ref(
         kb = kb.permute(1, 0, 2).unsqueeze(0)
         vb = vb.permute(1, 0, 2).unsqueeze(0)
 
-        ob = F.scaled_dot_product_attention(
-            qb, kb, vb,
-            attn_mask=None,
-            dropout_p=0.0,
-            is_causal=causal,
-            scale=softmax_scale,
-            enable_gqa=H_kv!=H
-        )
+        # Checkpoint independent KV-head groups to retain the full case at bounded
+        # reference-memory cost. No sequence, head or batch size is reduced.
+        ratio = H // H_kv
+        ob = torch.cat([
+            checkpoint(reference_group, qb[:, h*ratio:(h+1)*ratio],
+                       kb[:, h:h+1], vb[:, h:h+1], use_reentrant=False)
+            for h in range(H_kv)
+        ], dim=1)
 
         ob = ob.squeeze(0).permute(1, 0, 2).contiguous()
         outs.append(ob)
