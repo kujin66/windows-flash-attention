@@ -183,6 +183,39 @@ def test_unsupported_skip_cannot_hide_an_asynchronous_cuda_fault(policy, monkeyp
     with pytest.raises(StopIteration):
         hook.send(outcome)
     assert outcome.excinfo[1] is fault
+    assert 'deterministic backward not supported on SM 12.0' in '\n'.join(fault.__notes__)
+
+
+@pytest.mark.parametrize('body_error', [None, RuntimeError('original kernel launch failed')])
+def test_cuda_sync_fault_retains_original_body_status(policy, monkeypatch, body_error):
+    fault = RuntimeError('CUDA illegal memory access')
+
+    def synchronize():
+        raise fault
+
+    cuda = SimpleNamespace(is_initialized=lambda: True, is_available=lambda: True,
+                           synchronize=synchronize, get_device_capability=lambda: (12, 0))
+    monkeypatch.setitem(sys.modules, 'torch', SimpleNamespace(cuda=cuda, OutOfMemoryError=MemoryError))
+
+    class Outcome:
+        excinfo = (type(body_error), body_error, None) if body_error else None
+
+        def force_exception(self, exception):
+            self.excinfo = (type(exception), exception, None)
+
+    outcome = Outcome()
+    hook = policy.pytest_runtest_call(SimpleNamespace())
+    next(hook)
+    with pytest.raises(StopIteration):
+        hook.send(outcome)
+    assert outcome.excinfo[1] is fault
+    notes = '\n'.join(fault.__notes__)
+    if body_error:
+        assert 'Original test-body exception' in notes
+        assert 'original kernel launch failed' in notes
+        assert 'returned normally' not in notes
+    else:
+        assert 'Test body returned normally' in notes
 
 
 def test_cpu_mock_does_not_synchronize_an_initialized_cuda_context(policy, monkeypatch):

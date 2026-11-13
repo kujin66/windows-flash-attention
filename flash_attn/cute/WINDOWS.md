@@ -60,6 +60,8 @@ exclude files not collected yet; the reported file total identifies that gap.
 Normal and exceptional exits write a final snapshot with supervisor_alive=false.
 Intentional CPU mocks are excluded from post-case CUDA synchronization; real
 CUDA cases still synchronize before unsupported-feature errors can become skips.
+If synchronization fails, exception notes retain an earlier test-body exception
+or explicitly record that the body returned normally.
 The loop resumes after timeouts while completed-case counts keep increasing. Timeout
 cleanup terminates the entire Windows launcher/interpreter process tree.
 Each representative needs complete phase evidence; collection skips and all

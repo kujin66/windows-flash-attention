@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import time
+import traceback
 from types import SimpleNamespace
 
 import pytest
@@ -124,9 +125,15 @@ def pytest_runtest_call(item):
     # Surface asynchronous faults in the case that launched them. In particular,
     # an unsupported-feature exception must not hide a preceding CUDA failure.
     if torch.cuda.is_initialized() and torch.cuda.is_available():
+        body_exception = outcome.excinfo
         try:
             torch.cuda.synchronize()
         except Exception as error:
+            if body_exception:
+                error.add_note('Original test-body exception before CUDA synchronization:\n'
+                               + ''.join(traceback.format_exception(*body_exception)))
+            else:
+                error.add_note('Test body returned normally before post-case CUDA synchronization.')
             outcome.force_exception(error)
     if outcome.excinfo:
         error = outcome.excinfo[1]

@@ -7,7 +7,7 @@ This report does not certify that every FA4 configuration works on Windows.
 ## Source and CI
 
 Numerical validation source commit: `4ae8c12dd9a2cfa21a4c329b1a52ad1615b21766`.
-Production Python fingerprint:
+Validation fingerprint (package, upstream tests and supervisor Python files):
 `17930445e5d3a6a7763b6aedf92face8a9ba8b3149f753cd6b2c639e5929919e`.
 
 [Windows CI run 43250925140](https://github.com/kujin66/windows-flash-attention/actions/runs/43250925140)
@@ -42,7 +42,7 @@ their own synthetic SM count. These are not production kernel fixes.
 | Configured full matrix, 36 files | 66,426 passed; 28,983 skipped |
 | Representative coverage | 95,409 representatives mapping 471,182 original IDs |
 | Independent evidence audit | Passed; no missing current phase evidence |
-| CPU regression suite | 37 passed |
+| CPU regression suite, including original-body evidence guards | 39 passed |
 | Cold smoke | 26 passed; 2 skipped |
 | Warm SM120 cache | 10 passed; zero new kernel compiles |
 | Warm CUDA graph cache | 6 passed; 2 skipped; zero new kernel compiles |
@@ -58,6 +58,9 @@ Local evidence is under `agent_space/windows-native/17930445e5d3a6a7-full`
 archived original full-run binaries, smoke report and integration reports.
 These scratch artifacts are local, not included in the package. The current
 top-level acceptance snapshot belongs to the completed smoke stage.
+The new exception-note reporting change alters the supervisor fingerprint;
+the completed matrix above describes the stated numerical-validation commit.
+A fresh cached matrix with the updated evidence hook remains pending.
 
 ## Open anomalies
 
@@ -65,7 +68,9 @@ Both use BF16 MHA, head dimensions Q/K=192 and V=128, random varlen lengths
 and softcap=15:
 
 1. Dense Q/K, effective Q255/K1, noncausal/nonlocal: CUDA illegal memory access
-   at final synchronization after body assertions returned.
+   reported at final synchronization. The historical hook could replace an
+   earlier body exception, so that traceback does not prove body assertions
+   returned. The hook now preserves the original body status in exception notes.
 2. Dense Q/packed KV, effective Q255/K255, local enum 3: forward numerical
    mismatch, max difference 1.65625 against budget 3*0.109375+0.03125.
 
@@ -75,6 +80,14 @@ diagnostics reported expected version/procedure lookup errors; this is not a
 zero-CUDA-API-error claim. Racecheck and output-coverage investigation remain
 pending. No speculative patch or hardware-skip reclassification was applied.
 Status of these anomalies: NOT REPRODUCED; mechanism OPEN; not FIXED.
+
+Windows System event records 4829498/4829499/4829500/4829510/4829511 show an
+nvlddmkm TDR reset/restart at 01:16:02--04 local time, immediately before the
+first CUDA700 report at 01:16:05.860. No matching driver/display/WHEA event was
+returned for the second numerical failure at 02:05:42.780 in the queried
+01:15--02:06:40 interval. These are retrospective correlations: the TDR trigger
+is unknown and could be a software fault. They do not establish a hardware
+defect, explain the numerical mismatch, or justify an additional skip.
 
 ## Scope and environment
 
