@@ -1,19 +1,23 @@
 # Native Windows x64 FA4 validation
 
 Status: the configured matrix completed; overall acceptance remains open.
-Two current-source GPU anomalies passed retries but their causes are unresolved.
+Two historical GPU anomalies passed subsequent targeted checks and the fresh
+full matrix, but their causes are unresolved.
 This report does not certify that every FA4 configuration works on Windows.
 
 ## Source and CI
 
-Numerical validation source commit: `4ae8c12dd9a2cfa21a4c329b1a52ad1615b21766`.
+Validation source commit: `5c208760a514d14da966d218489198acaa54b3b0`.
 Validation fingerprint (package, upstream tests and supervisor Python files):
-`17930445e5d3a6a7763b6aedf92face8a9ba8b3149f753cd6b2c639e5929919e`.
+`be21bf6432c5c9c25cf9f628b80c8485bb7ad736e610908e545282335bfca8ff`.
 
-[Windows CI run 43250925140](https://github.com/kujin66/windows-flash-attention/actions/runs/43250925140)
+[Windows CI run 43348191065](https://github.com/kujin66/windows-flash-attention/actions/runs/43348191065)
 succeeded at that commit. An independent artifact comparison verified all 63
 package Python files in the wheel and source distribution, plus the source
-distribution's pyproject.toml and WINDOWS.md, normalizing only line endings.
+distribution's pyproject.toml, WINDOWS.md and WINDOWS_VALIDATION.md, normalizing
+only line endings. The fresh local wheel and installed package also matched
+all 63 current Python files. Documentation-only follow-up commits do not change
+the validated Python fingerprint; final-head CI must be checked separately.
 CI uses the existing PEP 517 package build and checks CPU supervisor tests and
 package metadata; it does not execute CUDA kernels.
 
@@ -50,17 +54,34 @@ their own synthetic SM count. These are not production kernel fixes.
 
 Warm integration prohibited new FA4/QuACK compilation. The standalone CuTe
 vector example compiled before that prohibition. Prior failure reports remain
-in the evidence: 21 historical reports, including two current-source anomalies.
+in the prior validation evidence: 21 historical reports, including two anomalies
+observed with the same attention Python code. The fresh current-hook full run
+has zero failed reports and zero unresolved representatives.
 Passing latest outcomes does not erase those failures.
 
-Local evidence is under `agent_space/windows-native/17930445e5d3a6a7-full`
-(`final-acceptance.json`, `independent-audit.json`). `overall.json` links the
-archived original full-run binaries, smoke report and integration reports.
-These scratch artifacts are local, not included in the package. The current
-top-level acceptance snapshot belongs to the completed smoke stage.
-The new exception-note reporting change alters the supervisor fingerprint;
-the completed matrix above describes the stated numerical-validation commit.
-A fresh cached matrix with the updated evidence hook remains pending.
+Fresh full evidence is under
+`agent_space/windows-native/body-evidence-current/be21bf6432c5c9c2-full`.
+Its independent audit covers all 36 files, every representative and complete
+current-source phase evidence with no issues. A programmed worker timeout
+resumed from 33,513 complete checkpoint cases; incomplete cases were rerun.
+Original cached kernels were copied into a separate directory; prior outcomes
+were not imported. The prior `17930445e5d3a6a7-full` report and its 21 failed
+reports remain intact.
+
+Current smoke evidence is under
+`agent_space/windows-native/body-evidence-smoke-1794540478642144500`; current
+integration evidence is under
+`agent_space/windows-native/body-evidence-integration-639301376629447616`.
+The corresponding `followup-smoke.json`, `followup-integration.json` and
+`followup-case0-racecheck.json` are in `body-evidence-current`. These scratch
+artifacts are local, not included in the package. The IDE's separate
+`native-stack/logs/acceptance.json` is not this FA4 validation report.
+
+An initial integration controller stopped when PowerShell treated a compiler
+UserWarning on redirected stderr as a terminating error, despite 59 numerical
+comparisons completing successfully. Its logs were retained. Recovery used
+separate stdout/stderr files and actual child exit codes; both fresh cold/warm
+passes completed successfully. Compiler warnings remain visible.
 
 ## Open anomalies
 
@@ -77,8 +98,20 @@ and softcap=15:
 Each subsequently passed 20 exact cached replays. Device-memory memcheck found
 zero device errors for each. API error reporting was disabled because separate
 diagnostics reported expected version/procedure lookup errors; this is not a
-zero-CUDA-API-error claim. Racecheck and output-coverage investigation remain
-pending. No speculative patch or hardware-skip reclassification was applied.
+zero-CUDA-API-error claim. Case 1 completed an unfiltered racecheck replay with
+zero hazards. Case 0 completed selected-CuTe-kernel racecheck with zero hazards;
+Torch reference kernels still executed but were not instrumented in that
+selected check. Cached object names verified the filter prefix for forward,
+backward, preprocess and postprocess. Both checks disabled CUDA API reporting.
+
+Finite 0/7 output poisoning completed 10 paired trials per case (40 upstream
+calls), with valid-query outputs bit-exact. Legitimately unwritten dense Q
+padding was excluded by the original contract. The two exact eight-predecessor
+sequences plus their target cases completed 10 repetitions each (180 calls).
+Both anomaly configurations also passed complete phase evidence in the fresh
+full matrix. These checks reject the tested isolated/coverage/short-sequence
+explanations; they do not establish why the historical faults occurred.
+No speculative patch or hardware-skip reclassification was applied.
 Status of these anomalies: NOT REPRODUCED; mechanism OPEN; not FIXED.
 
 Windows System event records 4829498/4829499/4829500/4829510/4829511 show an
