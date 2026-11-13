@@ -1,6 +1,19 @@
 name: CI
 
 on:
+  pull_request:
+    paths: ['flash_attn/cute/**', 'tests/cute/**', 'tests/windows/**', 'tools/windows*', '.github/workflows/ci.yml', '.github/workflows/publish-fa4.yml']
+  workflow_dispatch:
+    inputs:
+      run_windows_gpu:
+        description: Run on the configured local Windows GPU runner
+        type: boolean
+        default: false
+      gpu_suite:
+        description: GPU suite (full uses resource-reduced representatives)
+        type: choice
+        options: [smoke, full]
+        default: smoke
   push:
     branches: [main, ci-fix]
 
@@ -25,6 +38,7 @@ env:
 
 jobs:
   lint:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,6 +50,7 @@ jobs:
         run: ruff format --check flash_attn/cute/ --exclude "flash_attn/cute/flash_bwd.py,flash_attn/cute/flash_fwd.py,flash_attn/cute/flash_fwd_sm100.py,flash_attn/cute/interface.py"
 
   fa4-correctness-and-benchmark:
+    if: github.event_name == 'push'
     strategy:
       fail-fast: false
       matrix:
@@ -58,3 +73,82 @@ jobs:
           fa4_local_sif: ${{ vars.FA4_LOCAL_SIF }}
           fa4_image_cu129: "togethercomputer/training-performance:flash-attn-cu12.9-26.03.25@sha256:304a5c3d2b3a75b151cd2a964cd26d444e0d8b5686d63943df13378c9705f943"
           fa4_image_cu130: "togethercomputer/training-performance:flash-attn-cu13.0-26.06.27@sha256:2c31843c7137cbe909611eb70a9b6940581a2e3018d2c8b629f84dfd04b9bfd7"
+
+  windows-x64-build:
+    name: Windows x64 build and CPU tests
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - run: python -m pip install build twine pytest
+      - run: python -m pytest tests/windows -q
+      - run: python -m build
+        working-directory: flash_attn/cute
+      - run: python -m twine check flash_attn/cute/dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64-flash-attn-4
+          path: flash_attn/cute/dist/*
+          if-no-files-found: error
+
+  windows-x64-gpu:
+    needs: windows-x64-build
+    if: (github.event_name == 'workflow_dispatch' && inputs.run_windows_gpu) || (github.event_name == 'push' && vars.FA4_GPU_PYTHON != '')
+    concurrency:
+      group: windows-fa4-local-gpu
+      cancel-in-progress: false
+    runs-on: [self-hosted, Windows, X64, fa4-gpu]
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      FA4_GPU_SUITE: ${{ inputs.gpu_suite || 'smoke' }}
+      FA4_GPU_PYTHON: ${{ vars.FA4_GPU_PYTHON }}
+    steps:
+      - name: Set isolated GPU report directory
+        run: |
+          $reportPath = Join-Path $env:RUNNER_TEMP ('fa4-gpu-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
+          "FA4_GPU_REPORT=$reportPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check configured native GPU environment
+        run: |
+          if (-not $env:FA4_GPU_PYTHON -or -not (Test-Path -LiteralPath $env:FA4_GPU_PYTHON)) {
+            throw 'Set FA4_GPU_PYTHON to a dedicated runner venv Python with FA4 CUDA dependencies and build/twine/pytest installed.'
+          }
+          & $env:FA4_GPU_PYTHON -c 'import platform, sys, torch; assert sys.platform == "win32" and platform.machine().lower() in ("amd64", "x86_64"); assert sys.prefix != sys.base_prefix, "Dedicated venv required"; assert torch.cuda.is_available(), "CUDA GPU unavailable"; print(torch.cuda.get_device_name()); print(torch.cuda.get_device_capability())'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Build installed wheel and run cold/warm GPU tests
+        run: |
+          & ./tools/windows-loop.ps1 -Python $env:FA4_GPU_PYTHON -Suite $env:FA4_GPU_SUITE -WorkDir $env:FA4_GPU_REPORT
+          exit $LASTEXITCODE
+      - name: Verify completed acceptance
+        run: |
+          $acceptance = Get-Content -LiteralPath (Join-Path $env:FA4_GPU_REPORT 'acceptance.json') -Raw | ConvertFrom-Json
+          if ($acceptance.state -ne 'completed' -or -not $acceptance.passed -or $acceptance.pending_collected -ne 0 -or $acceptance.historical_failed_reports -ne 0) {
+            throw 'GPU acceptance incomplete or contains historical failures; inspect uploaded evidence.'
+          }
+          if ($env:FA4_GPU_SUITE -eq 'full') {
+            & $env:FA4_GPU_PYTHON tests/windows/evidence_audit.py $acceptance.source_report
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+      - name: Upload GPU evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64-gpu-${{ env.FA4_GPU_SUITE }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.FA4_GPU_REPORT }}/**/*.json
+            ${{ env.FA4_GPU_REPORT }}/**/*.jsonl
+            ${{ env.FA4_GPU_REPORT }}/**/*.xml
+            ${{ env.FA4_GPU_REPORT }}/**/*.log
+          if-no-files-found: warn

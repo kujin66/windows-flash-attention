@@ -21,18 +21,20 @@ the validated Python fingerprint; final-head CI must be checked separately.
 CI uses the existing PEP 517 package build and checks CPU supervisor tests and
 package metadata; it does not execute CUDA kernels.
 
-CI/CD follow-up: the Windows x64 workflow is now reusable by the existing
-FA4 publishing workflow and validates the resolved release tag before GitHub
-Release creation or PyPI publication. A separate manually dispatched local
-GPU workflow exposes smoke/full runs, isolated report/cache directories, and
-failure-evidence uploads. The repository had no registered self-hosted runner
-when checked; its GitHub GPU execution is not yet certified. These workflow
+CI/CD follow-up: Windows x64 build/CPU and local GPU jobs now live directly
+in the existing ci.yml. The existing publish-fa4.yml contains direct Windows
+CPU/build and mandatory GPU validation of the resolved release tag before
+GitHub Release creation or PyPI publication. No separate Windows workflows
+remain. The repository had no registered self-hosted runner when checked;
+release GPU validation requires runner provisioning, and its GitHub GPU
+execution is not yet certified. CI PR runs do not execute on that local GPU;
+manual CI can select smoke/full, and configured main pushes use smoke. These workflow
 and supervisor changes postdate the full matrix fingerprint above. The full
 counts describe that recorded source epoch, not a rerun of the new supervisor.
 Production attention and cache Python code is unchanged by this CI follow-up.
 The follow-up CPU regression suite passed 40 tests (including isolated CLI
-report-directory coverage). Actionlint passed for all three changed Windows
-and release workflows, with the documented custom fa4-gpu runner label allowed.
+report-directory coverage). Actionlint passed after the CI integration change;
+the existing b200 and new fa4-gpu runner labels are declared in actionlint.yaml.
 
 ## Windows changes
 
