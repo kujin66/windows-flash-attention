@@ -152,6 +152,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+          ref: ${{ github.sha }}
       - name: Check native ARM64 CUDA environment
         run: |
           if (-not $env:FA4_ARM64_GPU_PYTHON -or -not (Test-Path -LiteralPath $env:FA4_ARM64_GPU_PYTHON)) {
