@@ -8,15 +8,19 @@ python -m build flash_attn/cute
 python -m twine check flash_attn/cute/dist/*
 ~~~
 
-The Windows CI workflow is .github/workflows/windows-fa4.yml. Native x64 and
-ARM64 hosted runners build wheel
+The existing .github/workflows/ci.yml runs native x64 and ARM64 hosted
+build/CPU jobs. Both build wheel
 and sdist with the same pyproject/backend as publish-fa4.yml, checks metadata,
 and upload both artifacts. The source audit compares every package Python file
 in wheel and sdist against the checkout, plus sdist metadata and this document.
 CPU tests also exercise cross-process LockFileEx,
 launcher-tree timeout cleanup, checkpoint recovery and hardware-policy guards.
-Hosted CI has no NVIDIA GPU; its build result
-does not certify GPU kernels. CuTeDSL compiles those kernels at runtime.
+Hosted CPU jobs have no NVIDIA GPU. A separate native Windows ARM64 GPU job
+inside ci.yml runs on self-hosted Windows/ARM64/fa4-gpu runners for enabled
+manual dispatches and configured main/ci-fix pushes. PR events never use the
+local GPU. publish-fa4.yml requires ARM64 build/CPU and GPU smoke against the
+release tag before publication. See .github/workflows/README.md for runner
+variables, triggers and artifact handling. CuTeDSL compiles kernels at runtime.
 
 Install compatible native Windows CUDA PyTorch, CuTeDSL, QuACK, TVM FFI and
 the package dependencies before running numerical tests. Initialize the native
@@ -30,7 +34,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/windows-loop.ps1 -Pyth
 The entry point selects an ARM64 host/target toolchain for ARM64 Python. For a
 custom Visual Studio installation, pass `-VcVarsBat PATH_TO_NATIVE_VCVARS_BAT`.
 It verifies the PE architecture and SHA256 of Python, cl, link, nvcc and ptxas,
-and records loaded native images at the end of each worker. ARM64EC/ARM64X
+and records loaded native images at the end of each worker. Pass `-WorkDir`
+to isolate reports, checkpoints and caches (Actions uses the runner temp
+directory plus the run ID/attempt). ARM64EC/ARM64X
 Windows system libraries are recorded separately from native ARM64 extensions.
 SM120 and SM121 both run the Windows numerical smoke tests.
 
@@ -48,7 +54,8 @@ unchanged package sources, upstream tests, policy and audit implementations are
 required. Source comparison and epoch history are saved; changed numerical
 sources always need a fresh run. Before finalization, commit all source changes
 and authenticate `gh` in the account running the loop. The optional finalizer
-records the completed matrix, pushes the development branch, requires both
+records the completed matrix, pushes the development branch, dispatches the
+existing CI workflow, requires both
 final-head CI jobs, independently audits downloaded artifacts, and creates only
 a Draft PR. It contains no merge step.
 

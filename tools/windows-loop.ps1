@@ -6,7 +6,8 @@ param(
     [string]$VcVarsBat = '',
     [switch]$Watch,
     [switch]$DraftPR,
-    [string]$ResumeFrom = ''
+    [string]$ResumeFrom = '',
+    [string]$WorkDir = ''
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -37,5 +38,6 @@ $loopArgs = @((Join-Path $PSScriptRoot 'windows_native.py'), '--suite', $Suite, 
 if ($Watch) { $loopArgs += '--watch' }
 if ($DraftPR) { $loopArgs += '--draft-pr' }
 if ($ResumeFrom) { $loopArgs += @('--resume-from', $ResumeFrom) }
+if ($WorkDir) { $loopArgs += @('--work-dir', $WorkDir) }
 & $Python @loopArgs
 exit $LASTEXITCODE

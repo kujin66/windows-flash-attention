@@ -332,3 +332,14 @@ def test_workspace_temp_ignores_an_unusable_shared_temp_root(tmp_path, superviso
                              *supervisor.pytest_workspace_args(tmp_path / 'worker')],
                             capture_output=True, text=True, timeout=30, env=os.environ.copy())
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='Native Windows loop lock')
+def test_cli_keeps_actions_checkpoints_in_requested_work_dir(tmp_path, supervisor, monkeypatch):
+    work = tmp_path / 'actions-report'
+    monkeypatch.setattr(sys, 'argv', ['windows_native.py', '--suite', 'smoke', '--work-dir', str(work)])
+    monkeypatch.setattr(supervisor, 'validate', lambda args: 0)
+    monkeypatch.setattr(supervisor, 'source_fingerprint', lambda: 'test-source')
+    assert supervisor.main() == 0
+    assert supervisor.WORK == work.resolve()
+    assert (work / 'loop.lock').is_file()

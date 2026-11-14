@@ -5,7 +5,7 @@ import sys
 import time
 
 from windows_artifacts import audit as audit_artifacts
-from windows_native import REPO, WORK, pytest_workspace_args, source_fingerprint, write
+from windows_native import REPO, pytest_workspace_args, source_fingerprint, write
 
 
 def command(*args):
@@ -31,6 +31,7 @@ def require_full_acceptance(folder):
 
 
 def finalize(folder, repository):
+    work = folder.parent
     result, manifest = require_full_acceptance(folder)
     if command('git', 'status', '--porcelain'):
         raise RuntimeError('Draft PR blocked: commit reviewed source changes before finalization')
@@ -64,20 +65,23 @@ def finalize(folder, repository):
     command('git', 'commit', '-m', 'Record completed native ARM64 FA4 validation', '--', str(report))
     head = command('git', 'rev-parse', 'HEAD')
     state = dict(state='cpu_checks', head=head, source_sha256=result['source_sha256'], full_report=str(folder))
-    write(WORK / 'finalization.json', state)
+    write(work / 'finalization.json', state)
     with (folder / 'final-cpu.log').open('w', encoding='utf-8') as output:
         subprocess.run([sys.executable, '-m', 'pytest', str(REPO / 'tests/windows'), '-q',
                         *pytest_workspace_args(folder / 'final-cpu')],
                        cwd=REPO, stdout=output, stderr=subprocess.STDOUT, check=True)
     command('git', 'push', 'origin', f'HEAD:refs/heads/{branch}')
+    # CI runs on trusted branch pushes and PRs; a new development branch also
+    # needs a hosted CPU build before its Draft PR can be created.
+    command('gh', 'workflow', 'run', 'ci.yml', '--repo', repository, '--ref', branch)
     state['state'] = 'waiting_for_ci'
-    write(WORK / 'finalization.json', state)
+    write(work / 'finalization.json', state)
     deadline = time.monotonic() + 2700
     run = None
     while time.monotonic() < deadline:
         runs = gh_json('run', 'list', '--repo', repository, '--branch', branch, '--commit', head,
                        '--limit', '20', '--json', 'databaseId,name,status,conclusion,headSha,url')
-        candidates = [r for r in runs if r['name'] == 'Windows native FA4 build' and r['headSha'] == head]
+        candidates = [r for r in runs if r['name'] in ('CI', 'Windows native FA4 build') and r['headSha'] == head]
         if candidates:
             run = candidates[0]
             if run['status'] == 'completed':
@@ -87,7 +91,7 @@ def finalize(folder, repository):
         raise RuntimeError(f'Draft PR blocked: final-head Windows CI did not succeed: {run}')
     jobs = gh_json('run', 'view', str(run['databaseId']), '--repo', repository, '--json', 'jobs')['jobs']
     for architecture in ('arm64', 'x64'):
-        if not any(architecture in j['name'] and j['conclusion'] == 'success' for j in jobs):
+        if not any(architecture in j['name'].lower() and j['conclusion'] == 'success' for j in jobs):
             raise RuntimeError(f'Draft PR blocked: {architecture} CI job missing')
     dist = folder / f'ci-{head[:12]}-{run["databaseId"]}'
     if not dist.exists():
@@ -121,5 +125,5 @@ def finalize(folder, repository):
     if not pr['isDraft'] or pr['headRefOid'] != head or pr['state'] != 'OPEN':
         raise RuntimeError(f'Unexpected final Draft PR state: {pr}')
     state.update(state='draft_created', pr=pr, ci=run, artifacts=artifacts)
-    write(WORK / 'finalization.json', state)
+    write(work / 'finalization.json', state)
     print(f'Draft PR created: {pr["url"]}', flush=True)

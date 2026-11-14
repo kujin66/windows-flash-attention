@@ -32,6 +32,36 @@ To stop weekly betas: GitHub repo → Actions → "Publish flash-attn-4 to PyPI"
 
 ## Guardrails
 
+Windows validation is part of the existing `ci.yml` and `publish-fa4.yml`; no
+standalone Windows workflow is used. Hosted x64/Python 3.12 and
+ARM64/Python 3.13 jobs build the FA4 wheel/sdist, run CPU regressions, and compare
+packaged Python sources and metadata with the checkout. Linux/B200 jobs retain
+their original main/ci-fix push behavior.
+
+For native ARM64 CUDA validation, register a runner with
+`self-hosted, Windows, ARM64, fa4-gpu` labels and configure
+`FA4_ARM64_GPU_PYTHON` to a dedicated native ARM64 venv containing the CUDA
+dependencies, build, twine, pytest and setuptools-scm.
+`FA4_ARM64_GPU_VCVARS` optionally names a native ARM64 vcvars batch file for
+custom Visual Studio installations. The existing x64 `FA4_GPU_PYTHON` variable
+is separate. The GPU job verifies ARM64 Python/PE toolchain and a real CUDA GPU,
+builds/installs its own source wheel, and records native loaded images.
+
+Manual CI dispatch enables `run_windows_arm64_gpu` and chooses `gpu_suite`
+(`smoke` or `full`). Configured main/ci-fix pushes run GPU smoke. PR events
+never execute on the local runner. Smoke checks cold/warm caches and CUDA
+graphs; full retains every original test ID/input size and requires independent
+phase/source/native-image auditing. Full has a 24-hour self-hosted job budget;
+an unfinished run fails acceptance. Reports, pytest temporary directories and
+kernel caches are isolated by run ID/attempt. CI and release GPU jobs share a
+concurrency group; failed jobs still upload JSON/JSONL/JUnit/log evidence.
+
+FA4 publication now requires ARM64 CPU/build validation and native GPU smoke
+against the resolved release tag. Both GitHub Release and PyPI publication
+depend on these gates; a missing/offline ARM64 runner blocks publication. The
+original Linux distribution remains the publishing input. Local execution uses
+`tools/windows-loop.ps1 -Python ... -Suite smoke -WorkDir ...`.
+
 - Do not use `v*` tags for FA4 releases.
 - Do not use `fa4-v*` tags for FA2 releases.
 - Keep `flash_attn/cute/pyproject.toml` tag parsing in sync with the FA4 tag prefix.

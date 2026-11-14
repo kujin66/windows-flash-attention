@@ -78,8 +78,93 @@ jobs:
         name: python-package-distributions
         path: flash_attn/cute/dist/
 
+  windows-arm64-validation:
+    needs: prepare-release
+    permissions:
+      contents: read
+    name: Windows ARM64 build and CPU tests
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.release_tag }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          architecture: arm64
+      - run: python -m pip install build twine pytest
+      - run: python -m pytest tests/windows -q
+      - run: python -m build
+        working-directory: flash_attn/cute
+      - run: python -m twine check flash_attn/cute/dist/*
+      - run: python tools/windows_artifacts.py --dist flash_attn/cute/dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-arm64-flash-attn-4
+          path: flash_attn/cute/dist/*
+          if-no-files-found: error
+
+  windows-arm64-gpu-validation:
+    needs: [prepare-release, windows-arm64-validation]
+    permissions:
+      contents: read
+    concurrency:
+      group: windows-fa4-arm64-gpu
+      cancel-in-progress: false
+    runs-on: [self-hosted, Windows, ARM64, fa4-gpu]
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      FA4_GPU_SUITE: smoke
+      FA4_ARM64_GPU_PYTHON: ${{ vars.FA4_ARM64_GPU_PYTHON }}
+      FA4_ARM64_GPU_VCVARS: ${{ vars.FA4_ARM64_GPU_VCVARS }}
+    steps:
+      - name: Set isolated GPU report directory
+        run: |
+          $reportPath = Join-Path $env:RUNNER_TEMP ('fa4-arm64-release-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
+          "FA4_GPU_REPORT=$reportPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.release_tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check native ARM64 CUDA environment
+        run: |
+          if (-not $env:FA4_ARM64_GPU_PYTHON -or -not (Test-Path -LiteralPath $env:FA4_ARM64_GPU_PYTHON)) {
+            throw 'Set FA4_ARM64_GPU_PYTHON to a dedicated native ARM64 venv with CUDA dependencies and build/twine/pytest installed.'
+          }
+          & $env:FA4_ARM64_GPU_PYTHON -c 'import platform, sys, torch; assert sys.platform == "win32" and platform.machine().lower() in ("arm64", "aarch64"); assert sys.prefix != sys.base_prefix, "Dedicated venv required"; assert torch.cuda.is_available(), "CUDA GPU unavailable"; print(torch.cuda.get_device_name()); print(torch.cuda.get_device_capability())'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Build installed wheel and run cold/warm GPU smoke
+        run: |
+          $loop = @{ Python = $env:FA4_ARM64_GPU_PYTHON; Suite = $env:FA4_GPU_SUITE; WorkDir = $env:FA4_GPU_REPORT }
+          if ($env:FA4_ARM64_GPU_VCVARS) { $loop.VcVarsBat = $env:FA4_ARM64_GPU_VCVARS }
+          & ./tools/windows-loop.ps1 @loop
+          exit $LASTEXITCODE
+      - name: Verify completed acceptance
+        run: |
+          $acceptance = Get-Content -LiteralPath (Join-Path $env:FA4_GPU_REPORT 'acceptance.json') -Raw | ConvertFrom-Json
+          if ($acceptance.state -ne 'completed' -or -not $acceptance.passed -or $acceptance.pending_collected -ne 0 -or $acceptance.historical_failed_reports -ne 0) {
+            throw 'GPU acceptance is incomplete or contains historical failures; inspect uploaded evidence.'
+          }
+      - name: Upload GPU evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-arm64-gpu-smoke-${{ github.run_attempt }}
+          path: |
+            ${{ env.FA4_GPU_REPORT }}/**/*.json
+            ${{ env.FA4_GPU_REPORT }}/**/*.jsonl
+            ${{ env.FA4_GPU_REPORT }}/**/*.xml
+            ${{ env.FA4_GPU_REPORT }}/**/*.log
+          if-no-files-found: warn
+
   github-release:
-    needs: [prepare-release, build]
+    needs: [prepare-release, build, windows-arm64-validation, windows-arm64-gpu-validation]
     runs-on: ubuntu-latest
     steps:
     - name: Download distribution packages
@@ -96,7 +181,7 @@ jobs:
         prerelease: ${{ contains(needs.prepare-release.outputs.release_tag, '.beta') }}
 
   publish-to-pypi:
-    needs: build
+    needs: [build, windows-arm64-validation, windows-arm64-gpu-validation]
     runs-on: ubuntu-latest
     environment:
       name: pypi

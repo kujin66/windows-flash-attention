@@ -192,10 +192,13 @@ def run(command, log, **kwargs):
 
 
 def main():
+    global WORK
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--suite', choices=('smoke', 'full'), default='full')
     parser.add_argument('--max-attempts', type=int, default=3)
     parser.add_argument('--worker-seconds', type=int, default=1800)
+    parser.add_argument('--work-dir', type=Path, default=WORK,
+                        help='Isolated checkpoint, cache and evidence directory')
     parser.add_argument('--sequence-cap', type=int, default=0,
                         help='Optional reduced matrix; 0 preserves every original input size')
     parser.add_argument('--resume-from', type=Path, help='Resume an orchestration-only source epoch after source comparison')
@@ -204,6 +207,7 @@ def main():
     parser.add_argument('--draft-pr', action='store_true', help='After full acceptance and matching final CI, create a Draft PR only')
     parser.add_argument('--github-repo', default='kujin66/windows-flash-attention')
     args = parser.parse_args()
+    WORK = args.work_dir.resolve()
     if sys.platform != 'win32' or platform.machine().lower() not in ('amd64', 'x86_64', 'arm64', 'aarch64'):
         parser.error('Native Windows x64 or ARM64 Python required')
     if args.sequence_cap != 0 and args.sequence_cap < 128:
@@ -287,6 +291,9 @@ def validate(args):
     env = os.environ.copy()
     env.update(PYTHONPATH=str(REPO / 'tools'), PYTHONUNBUFFERED='1',
                FLASH_ATTENTION_FAKE_TENSOR='0', FA4_SEQUENCE_CAP=str(args.sequence_cap),
+               QUACK_CACHE_ENABLED='1', QUACK_CACHE_DIR=str(WORK / 'quack-cache'),
+               CUTE_DSL_CACHE_DIR=str(WORK / 'cutedsl-cache'),
+               CUDA_CACHE_PATH=str(WORK / 'cuda-cache'),
                FLASH_ATTENTION_CUTE_DSL_CACHE_ENABLED='1',
                FLASH_ATTENTION_CUTE_DSL_CACHE_DIR=str(WORK / (architecture + '-kernel-cache')))
     probe = 'import sys; from pathlib import Path; import flash_attn.cute as m; print(m.__file__); assert Path(m.__file__).is_relative_to(Path(sys.prefix))'
