@@ -5,7 +5,7 @@ import sys
 import time
 
 from windows_artifacts import audit as audit_artifacts
-from windows_native import REPO, WORK, source_fingerprint, write
+from windows_native import REPO, WORK, pytest_workspace_args, source_fingerprint, write
 
 
 def command(*args):
@@ -67,7 +67,8 @@ def finalize(folder, repository):
     write(WORK / 'finalization.json', state)
     with (folder / 'final-cpu.log').open('w', encoding='utf-8') as output:
         subprocess.run([sys.executable, '-m', 'pytest', str(REPO / 'tests/windows'), '-q',
-                        '-o', f'cache_dir={WORK / "cpu-cache"}'], cwd=REPO, stdout=output, stderr=subprocess.STDOUT, check=True)
+                        *pytest_workspace_args(folder / 'final-cpu')],
+                       cwd=REPO, stdout=output, stderr=subprocess.STDOUT, check=True)
     command('git', 'push', 'origin', f'HEAD:refs/heads/{branch}')
     state['state'] = 'waiting_for_ci'
     write(WORK / 'finalization.json', state)

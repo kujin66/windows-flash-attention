@@ -53,6 +53,10 @@ def resume_evidence(previous, folder, args, fingerprint):
         shutil.copytree(report, target)
         events = target / 'events.jsonl'
         if events.exists():
+            # A repaired worker environment gets fresh attempts, while every
+            # historical failure stays in the append-only report.
+            epoch['nodeids'] = [node for node, outcome in case_results(events)[0].items()
+                                if outcome in ('failed', 'incomplete')]
             with events.open('a', encoding='utf-8') as output:
                 output.write(json.dumps(epoch) + '\n')
                 output.flush()
@@ -98,13 +102,32 @@ def case_results(events):
 
 
 def completed_for_resume(events, max_attempts):
-    outcomes, history = case_results(events)
-    failures = Counter(entry['nodeid'] for entry in history)
+    outcomes, _ = case_results(events)
+    failures = Counter()
+    if events.exists():
+        for line in events.read_text(encoding='utf-8').splitlines():
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if entry.get('event') == 'invalidate':
+                for node in entry['nodeids']:
+                    failures.pop(node, None)
+            elif entry.get('event') == 'report' and entry['outcome'] == 'failed':
+                failures[entry['nodeid']] += 1
     # Exhausted failures remain failures in verification; excluding them lets
     # every other original test run instead of repeatedly aborting one file.
     return [node for node, outcome in outcomes.items()
             if outcome in ('passed', 'skipped')
             or (outcome == 'failed' and failures[node] >= max_attempts)]
+
+
+def pytest_workspace_args(report):
+    """Avoid shared pytest temp/cache directories owned by another account."""
+    temporary = report / 'pytest-temp'
+    temporary.mkdir(parents=True, exist_ok=True)
+    return ['--basetemp', str(temporary / str(time.time_ns())),
+            '-o', f'cache_dir={report / "pytest-cache"}']
 
 
 def write(path, value):
@@ -300,7 +323,8 @@ def validate(args):
             write(report / 'done.json', done)
             env['FA4_DONE_FILE'] = str(report / 'done.json')
             code = run([sys.executable, '-m', 'pytest', str(path), '-p', 'windows_policy',
-                        '-q', '--tb=short', '--maxfail=1', f'--junitxml={report / (str(time.time_ns()) + ".xml")}'],
+                        '-q', '--tb=short', '--maxfail=1', *pytest_workspace_args(report),
+                        f'--junitxml={report / (str(time.time_ns()) + ".xml")}'],
                        report / f'attempt-{time.time_ns()}.log', cwd=folder, env=env,
                        timeout=args.worker_seconds)
             summary[path.name] = dict(exitcode=code, previously_completed=len(done), report=str(report))
@@ -313,7 +337,7 @@ def validate(args):
             write(report / 'done.json', [])
             env['FLASH_ATTENTION_TEST_EXPECT_CACHED'] = '1'
             code = run([sys.executable, '-m', 'pytest', str(path), '-p', 'windows_policy',
-                        '-q', '--tb=short', f'--junitxml={report / "warm.xml"}'],
+                        '-q', '--tb=short', *pytest_workspace_args(report), f'--junitxml={report / "warm.xml"}'],
                        report / 'warm.log', cwd=folder, env=env, timeout=args.worker_seconds)
             env.pop('FLASH_ATTENTION_TEST_EXPECT_CACHED')
             summary[path.name]['warm_exitcode'] = code

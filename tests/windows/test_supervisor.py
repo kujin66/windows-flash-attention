@@ -308,3 +308,27 @@ def test_resume_rejects_changed_numerical_sources(tmp_path, supervisor, monkeypa
     with pytest.raises(RuntimeError, match='numerical sources'):
         supervisor.resume_evidence(previous, tmp_path / 'new', args, 'a' * 64)
     assert not (tmp_path / 'new').exists()
+
+
+def test_invalidated_failures_receive_a_fresh_retry_budget(tmp_path, supervisor):
+    events = tmp_path / 'events.jsonl'
+    records = [dict(event='report', nodeid='bad', phase='call', outcome='failed')] * 3
+    records.append(dict(event='invalidate', nodeids=['bad']))
+    records.append(dict(event='report', nodeid='bad', phase='call', outcome='failed'))
+    events.write_text('\n'.join(map(json.dumps, records)))
+    assert supervisor.completed_for_resume(events, 3) == []
+    assert len(supervisor.case_results(events)[1]) == 4
+
+
+def test_workspace_temp_ignores_an_unusable_shared_temp_root(tmp_path, supervisor, monkeypatch):
+    import os
+    import subprocess
+    blocked = tmp_path / 'not-a-directory'
+    blocked.write_text('A shared temp root must not be required')
+    monkeypatch.setenv('PYTEST_DEBUG_TEMPROOT', str(blocked))
+    test = tmp_path / 'test_temp_fixture.py'
+    test.write_text('def test_temp(tmp_path):\n    (tmp_path / "probe").write_text("ok")\n')
+    result = subprocess.run([sys.executable, '-m', 'pytest', str(test), '-q',
+                             *supervisor.pytest_workspace_args(tmp_path / 'worker')],
+                            capture_output=True, text=True, timeout=30, env=os.environ.copy())
+    assert result.returncode == 0, result.stdout + result.stderr
