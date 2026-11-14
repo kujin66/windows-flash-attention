@@ -14,6 +14,10 @@ on:
         type: choice
         options: [smoke, full]
         default: smoke
+      arm64_runner_label:
+        description: Optional unique label for a one-job ARM64 validation runner
+        type: string
+        default: ''
   push:
     branches: [main, ci-fix]
 
@@ -130,7 +134,7 @@ jobs:
     concurrency:
       group: windows-fa4-arm64-gpu
       cancel-in-progress: false
-    runs-on: [self-hosted, Windows, ARM64, fa4-gpu]
+    runs-on: ${{ inputs.arm64_runner_label || fromJSON('["self-hosted","Windows","ARM64","fa4-gpu"]') }}
     timeout-minutes: ${{ inputs.gpu_suite == 'full' && 1440 || 60 }}
     defaults:
       run:

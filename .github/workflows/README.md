@@ -50,7 +50,10 @@ builds/installs its own source wheel, and records native loaded images.
 Manual CI dispatch enables `run_windows_arm64_gpu` and chooses `gpu_suite`
 (`smoke` or `full`). Configured main/ci-fix pushes run GPU smoke. PR events
 never execute on the local runner. Smoke checks cold/warm caches and CUDA
-graphs; full retains every original test ID/input size and requires independent
+graphs. An optional `arm64_runner_label` selects a unique label for an
+ephemeral one-job runner registered without default labels; other queued
+repository jobs cannot match it. Leaving it empty uses the standard labels.
+Full retains every original test ID/input size and requires independent
 phase/source/native-image auditing. Full has a 24-hour self-hosted job budget;
 an unfinished run fails acceptance. Reports, pytest temporary directories and
 kernel caches are isolated by run ID/attempt. CI and release GPU jobs share a
