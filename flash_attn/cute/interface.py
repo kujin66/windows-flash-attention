@@ -151,6 +151,12 @@ def _validate_head_dims(head_dim: int, head_dim_v: int, compute_capability: int,
             f"(head_dim, head_dim_v)=({head_dim}, {head_dim_v}) is not supported on SM100/SM110. "
             f"head_dim and head_dim_v must be between 8 and 128 and divisible by {alignment}, or (192, 128) for DeepSeek, or (256, 256) for hd256."
         )
+    elif compute_capability in [8, 12]:
+        assert (8 <= head_dim <= 256 and 8 <= head_dim_v <= 256
+                and head_dim % alignment == 0 and head_dim_v % alignment == 0), (
+            f"(head_dim, head_dim_v)=({head_dim}, {head_dim_v}) is not supported on SM{compute_capability * 10}. "
+            f"head_dim and head_dim_v must be between 8 and 256 and divisible by {alignment}."
+        )
 
 
 def _validate_tensor(t, name, expected_shape, expected_dtype, expected_device):
@@ -769,8 +775,7 @@ def _flash_attn_fwd(
         assert arch // 10 == 9, "dynamic_causal is only supported on SM90 (Hopper)."
     assert num_head % num_head_kv == 0, "num_head must be divisible by num_head_kv"
     alignment = 16 // v.element_size()
-    if arch // 10 not in [8, 12]:
-        _validate_head_dims(head_dim, head_dim_v, arch // 10, alignment)
+    _validate_head_dims(head_dim, head_dim_v, arch // 10, alignment)
     if softmax_scale is None:
         softmax_scale = (
             1.0 / math.sqrt(head_dim) if qv is None or q is None
@@ -2551,8 +2556,7 @@ def _flash_attn_bwd(
         ), "inputs must be on CUDA device"
     assert num_head % num_head_kv == 0, "num_head must be divisible by num_head_kv"
     alignment = 16 // q.element_size()
-    if arch // 10 != 12:
-        _validate_head_dims(head_dim, head_dim_v, arch // 10, alignment)
+    _validate_head_dims(head_dim, head_dim_v, arch // 10, alignment)
     if softmax_scale is None:
         softmax_scale = 1.0 / math.sqrt(head_dim)
     qhead_per_kvhead = num_head // num_head_kv

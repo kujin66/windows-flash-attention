@@ -14,6 +14,8 @@ on:
 
 jobs:
   setup_release:
+    # The create event also fires for branches; tag filters are not supported.
+    if: github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v')
     name: Create Release
     runs-on: ubuntu-latest
     outputs:
