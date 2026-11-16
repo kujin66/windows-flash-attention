@@ -32,38 +32,40 @@ To stop weekly betas: GitHub repo → Actions → "Publish flash-attn-4 to PyPI"
 
 ## Guardrails
 
-Windows validation is part of the existing `ci.yml` and `publish-fa4.yml`; no
-standalone Windows workflow is used. Hosted x64/Python 3.12 and
-ARM64/Python 3.13 jobs build the FA4 wheel/sdist, run CPU regressions, and compare
-packaged Python sources and metadata with the checkout. Linux/B200 jobs retain
-their original main/ci-fix push behavior.
+Windows validation runs directly in `ci.yml` and `publish-fa4.yml`. Hosted
+Windows x64/Python 3.12 and ARM64/Python 3.13 jobs build wheel/sdist, run CPU
+regressions, check metadata and compare packaged sources with the checkout.
+Linux/B200 jobs retain their existing main/ci-fix push behavior.
 
-For native ARM64 CUDA validation, register a runner with
-`self-hosted, Windows, ARM64, fa4-gpu` labels and configure
-`FA4_ARM64_GPU_PYTHON` to a dedicated native ARM64 venv containing the CUDA
-dependencies, build, twine, pytest and setuptools-scm.
-`FA4_ARM64_GPU_VCVARS` optionally names a native ARM64 vcvars batch file for
-custom Visual Studio installations. The existing x64 `FA4_GPU_PYTHON` variable
-is separate. The GPU job verifies ARM64 Python/PE toolchain and a real CUDA GPU,
-builds/installs its own source wheel, and records native loaded images.
+| Native GPU | Runner labels | Dedicated venv variable | Manual CI input |
+| --- | --- | --- | --- |
+| x64 | `self-hosted, Windows, X64, fa4-gpu` | `FA4_GPU_PYTHON` | `run_windows_gpu` |
+| ARM64 | `self-hosted, Windows, ARM64, fa4-gpu` | `FA4_ARM64_GPU_PYTHON` | `run_windows_arm64_gpu` |
 
-Manual CI dispatch enables `run_windows_arm64_gpu` and chooses `gpu_suite`
-(`smoke` or `full`). Configured main/ci-fix pushes run GPU smoke. PR events
-never execute on the local runner. Smoke checks cold/warm caches and CUDA
-graphs. An optional `arm64_runner_label` selects a unique label for an
-ephemeral one-job runner registered without default labels; other queued
-repository jobs cannot match it. Leaving it empty uses the standard labels.
-Full retains every original test ID/input size and requires independent
-phase/source/native-image auditing. Full has a 24-hour self-hosted job budget;
-an unfinished run fails acceptance. Reports, pytest temporary directories and
-kernel caches are isolated by run ID/attempt. CI and release GPU jobs share a
-concurrency group; failed jobs still upload JSON/JSONL/JUnit/log evidence.
+Each venv needs native CUDA dependencies, build, twine, pytest and setuptools-scm;
+the host needs NVIDIA drivers, CUDA and the matching native MSVC toolchain.
+`FA4_ARM64_GPU_VCVARS` optionally selects an ARM64 vcvars batch file.
+`arm64_runner_label` optionally selects an isolated one-job ARM64 runner
+registered without default labels; leaving it empty uses the labels above.
 
-FA4 publication now requires ARM64 CPU/build validation and native GPU smoke
-against the resolved release tag. Both GitHub Release and PyPI publication
-depend on these gates; a missing/offline ARM64 runner blocks publication. The
-original Linux distribution remains the publishing input. Local execution uses
-`tools/windows-loop.ps1 -Python ... -Suite smoke -WorkDir ...`.
+Manual CI can enable either or both GPUs and select `gpu_suite` (`smoke`/`full`).
+Configured main/ci-fix pushes use smoke; PR events never use local GPU runners.
+GPU checkouts are pinned to the triggering commit. Smoke checks cold/warm
+caches and CUDA graphs. Full preserves x64 cap256 representatives and ARM64
+original input sizes, with independent phase/source/native-image auditing;
+reduced mappings do not certify original large inputs. The x64 job retains
+its six-hour budget and ARM64 full its 24-hour budget; unfinished runs fail
+acceptance. Reports, pytest temporary directories and caches are isolated by
+architecture/run/attempt. CI and release serialize each architecture using
+the same concurrency group and upload JSON/JSONL/JUnit/log evidence on failure.
+
+Both GitHub Release and PyPI publication require x64 **and** ARM64 build/CPU
+and GPU smoke gates against the resolved release tag. Missing/offline runners
+block publication. The existing Linux distribution remains the publishing
+input. Local execution uses `tools/windows-loop.ps1 -Python ... -Suite ...
+-WorkDir ...`; pass `-SequenceCap 256` to reproduce the reduced x64 matrix.
+Recorded results and original artifact identities are indexed in
+[`WINDOWS_CI_VALIDATION.md`](../../flash_attn/cute/WINDOWS_CI_VALIDATION.md).
 
 - Do not use `v*` tags for FA4 releases.
 - Do not use `fa4-v*` tags for FA2 releases.

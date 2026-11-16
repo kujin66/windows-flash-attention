@@ -15,12 +15,15 @@ and upload both artifacts. The source audit compares every package Python file
 in wheel and sdist against the checkout, plus sdist metadata and this document.
 CPU tests also exercise cross-process LockFileEx,
 launcher-tree timeout cleanup, checkpoint recovery and hardware-policy guards.
-Hosted CPU jobs have no NVIDIA GPU. A separate native Windows ARM64 GPU job
-inside ci.yml runs on self-hosted Windows/ARM64/fa4-gpu runners for enabled
+Hosted CPU jobs have no NVIDIA GPU. Native Windows x64 and ARM64 GPU jobs
+inside ci.yml run on matching self-hosted Windows/X64/fa4-gpu and
+Windows/ARM64/fa4-gpu runners for enabled
 manual dispatches and configured main/ci-fix pushes. PR events never use the
-local GPU. publish-fa4.yml requires ARM64 build/CPU and GPU smoke against the
-release tag before publication. See .github/workflows/README.md for runner
+local GPU. publish-fa4.yml requires both x64 and ARM64 build/CPU and GPU smoke
+against the release tag before publication. See .github/workflows/README.md for runner
 variables, triggers and artifact handling. CuTeDSL compiles kernels at runtime.
+Recorded per-architecture results and CI artifacts are indexed in
+[WINDOWS_CI_VALIDATION.md](WINDOWS_CI_VALIDATION.md).
 
 Install compatible native Windows CUDA PyTorch, CuTeDSL, QuACK, TVM FFI and
 the package dependencies before running numerical tests. Initialize the native

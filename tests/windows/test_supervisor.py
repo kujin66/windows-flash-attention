@@ -22,6 +22,24 @@ def supervisor():
     return load('native_supervisor_test', REPO / 'tools/windows_native.py')
 
 
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows loop lock')
+def test_cli_uses_isolated_work_directory(tmp_path, supervisor, monkeypatch):
+    work = tmp_path / 'isolated-run'
+    monkeypatch.setattr(supervisor.sys, 'argv', ['windows_native.py', '--suite', 'smoke',
+                                               '--work-dir', str(work)])
+    monkeypatch.setattr(supervisor, 'WORK', supervisor.WORK)
+    observed = []
+
+    def validate(args):
+        observed.append((supervisor.WORK, args.suite))
+        return 17
+
+    monkeypatch.setattr(supervisor, 'validate', validate)
+    assert supervisor.main() == 17
+    assert observed == [(work.resolve(), 'smoke')]
+    assert (work / 'loop.lock').exists()
+
+
 def test_recovery_does_not_inherit_results_from_an_interrupted_retry(tmp_path, supervisor):
     events = tmp_path / 'events.jsonl'
     records = []
