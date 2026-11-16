@@ -4,8 +4,6 @@ param(
     [int]$MaxAttempts = 3,
     [int]$SequenceCap = 0,
     [string]$VcVarsBat = '',
-    [switch]$Watch,
-    [switch]$DraftPR,
     [string]$ResumeFrom = '',
     [string]$WorkDir = ''
 )
@@ -35,8 +33,6 @@ if ($VcVarsBat) {
 $env:PYTHONNOUSERSITE = '1'
 $env:PYTHONUNBUFFERED = '1'
 $loopArgs = @((Join-Path $PSScriptRoot 'windows_native.py'), '--suite', $Suite, '--max-attempts', $MaxAttempts, '--sequence-cap', $SequenceCap)
-if ($Watch) { $loopArgs += '--watch' }
-if ($DraftPR) { $loopArgs += '--draft-pr' }
 if ($ResumeFrom) { $loopArgs += @('--resume-from', $ResumeFrom) }
 if ($WorkDir) { $loopArgs += @('--work-dir', $WorkDir) }
 & $Python @loopArgs

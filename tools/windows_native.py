@@ -202,10 +202,6 @@ def main():
     parser.add_argument('--sequence-cap', type=int, default=0,
                         help='Optional reduced matrix; 0 preserves every original input size')
     parser.add_argument('--resume-from', type=Path, help='Resume an orchestration-only source epoch after source comparison')
-    parser.add_argument('--watch', action='store_true', help='Rebuild and validate when source changes; retain failed evidence')
-    parser.add_argument('--poll-seconds', type=int, default=30)
-    parser.add_argument('--draft-pr', action='store_true', help='After full acceptance and matching final CI, create a Draft PR only')
-    parser.add_argument('--github-repo', default='kujin66/windows-flash-attention')
     args = parser.parse_args()
     WORK = args.work_dir.resolve()
     if sys.platform != 'win32' or platform.machine().lower() not in ('amd64', 'x86_64', 'arm64', 'aarch64'):
@@ -214,10 +210,6 @@ def main():
         parser.error('--sequence-cap must be 0 or at least 128')
     if args.max_attempts < 1:
         parser.error('--max-attempts must be positive')
-    if args.poll_seconds < 5:
-        parser.error('--poll-seconds must be at least 5')
-    if args.draft_pr and (args.suite != 'full' or args.sequence_cap):
-        parser.error('Draft PR requires full original-size validation')
     WORK.mkdir(parents=True, exist_ok=True)
     import msvcrt
     with (WORK / 'loop.lock').open('a+b') as lock:
@@ -230,22 +222,7 @@ def main():
         monitor = threading.Thread(target=monitor_acceptance, args=(stop,), daemon=True)
         monitor.start()
         try:
-            previous = None
-            while True:
-                current = source_fingerprint()
-                if current != previous:
-                    code = validate(args)
-                    args.resume_from = None
-                    previous = current
-                    if code == 0 and args.draft_pr:
-                        from windows_finalize import finalize
-                        state = json.loads((WORK / 'status.json').read_text())
-                        finalize(Path(state['folder']), args.github_repo)
-                        return 0
-                    if not args.watch:
-                        return code
-                    print('Validation passed; watching sources' if code == 0 else 'Needs fixes; watching source changes', flush=True)
-                time.sleep(args.poll_seconds)
+            return validate(args)
         except BaseException as error:
             if (WORK / 'status.json').exists():
                 state = json.loads((WORK / 'status.json').read_text())
