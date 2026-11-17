@@ -1,4 +1,0 @@
-self-hosted-runner:
-  labels:
-    - b200
-    - fa4-gpu

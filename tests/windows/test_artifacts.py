@@ -8,7 +8,7 @@ import zipfile
 import pytest
 
 
-@pytest.mark.parametrize("changed", [None, "wheel", "sdist", "installed"])
+@pytest.mark.parametrize("changed", [None, "wheel", "sdist", "installed", "readme"])
 def test_artifact_source_comparison(tmp_path, monkeypatch, changed):
     repo = Path(__file__).resolve().parents[2]
     spec = importlib.util.spec_from_file_location("artifacts_test", repo / "tools/windows_artifacts.py")
@@ -17,7 +17,7 @@ def test_artifact_source_comparison(tmp_path, monkeypatch, changed):
     monkeypatch.setattr(module, "REPO", tmp_path)
     source = tmp_path / "flash_attn/cute"
     source.mkdir(parents=True)
-    for name, data in {"__init__.py": b"value = 1\n", "pyproject.toml": b"[project]\n", "WINDOWS.md": b"Windows\n"}.items():
+    for name, data in {"__init__.py": b"value = 1\n", "pyproject.toml": b"[project]\n", "README.md": b"Package readme\n"}.items():
         (source / name).write_bytes(data)
     dist = tmp_path / "dist"
     dist.mkdir()
@@ -25,7 +25,9 @@ def test_artifact_source_comparison(tmp_path, monkeypatch, changed):
         archive.writestr("flash_attn/cute/__init__.py", b"value = 2\n" if changed == "wheel" else b"value = 1\r\n")
     with tarfile.open(dist / "test.tar.gz", "w:gz") as archive:
         for path in source.iterdir():
-            data = b"changed" if changed == "sdist" and path.suffix == ".py" else path.read_bytes()
+            corrupt = ((changed == "sdist" and path.suffix == ".py")
+                       or (changed == "readme" and path.name == "README.md"))
+            data = b"changed" if corrupt else path.read_bytes()
             member = tarfile.TarInfo("test/" + path.name)
             member.size = len(data)
             archive.addfile(member, io.BytesIO(data))
@@ -35,4 +37,5 @@ def test_artifact_source_comparison(tmp_path, monkeypatch, changed):
     result = module.audit(dist, installed)
     assert result["passed"] is (changed is None)
     if changed:
-        assert any(issue.startswith(changed + ":") for issue in result["issues"])
+        prefix = "sdist" if changed == "readme" else changed
+        assert any(issue.startswith(prefix + ":") for issue in result["issues"])

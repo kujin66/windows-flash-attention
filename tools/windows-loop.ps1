@@ -8,7 +8,6 @@ param(
     [string]$WorkDir = ''
 )
 $ErrorActionPreference = 'Stop'
-$root = Split-Path $PSScriptRoot -Parent
 $architecture = & $Python -c "import platform; print(platform.machine().lower())"
 if ($LASTEXITCODE -ne 0) { throw 'Python architecture detection failed' }
 $target = if ($architecture -in @('arm64', 'aarch64')) { 'arm64' } else { 'x64' }

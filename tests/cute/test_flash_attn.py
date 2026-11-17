@@ -3284,11 +3284,9 @@ def test_flash_attn_bwd_preallocated_outputs(seqlen_q, seqlen_k, d, causal, dtyp
     for expected, baseline, automatic, supplied in zip(
         gradients_ref, gradients_pt, (dq_ref, dk_ref, dv_ref), (dq, dk, dv)
     ):
-        atol = 2 * (expected + 0.3 - 0.3 - expected).abs().max().item()
-        bound = 2 * (baseline - expected).abs().max().item() + atol
         for actual in (automatic, supplied):
             assert torch.isfinite(actual).all()
-            assert (actual - expected).abs().max().item() <= bound
+            check_tensor_vs_ref("preallocated gradient", actual, expected, baseline)
 
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16])

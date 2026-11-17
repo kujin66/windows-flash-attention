@@ -25,7 +25,7 @@ def audit(dist, installed=None):
     with tarfile.open(sdist) as archive:
         packaged = {Path(m.name).name: archive.extractfile(m).read()
                     for m in archive.getmembers() if m.isfile()
-                    and (m.name.endswith(".py") or Path(m.name).name in ("pyproject.toml", "WINDOWS.md"))}
+                    and (m.name.endswith(".py") or Path(m.name).name in ("pyproject.toml", "README.md"))}
     for label, actual in (("wheel", files), ("sdist", packaged)):
         if set(expected) - actual.keys():
             issues.append(f"{label}: missing {sorted(set(expected) - actual.keys())}")
@@ -34,7 +34,7 @@ def audit(dist, installed=None):
                 issues.append(f"{label}: source differs: {name}")
     if set(files) != set(expected):
         issues.append("wheel: Python file inventory differs from source")
-    for name in ("pyproject.toml", "WINDOWS.md"):
+    for name in ("pyproject.toml", "README.md"):
         if normalized(packaged.get(name, b"")) != normalized((sources / name).read_bytes()):
             issues.append(f"sdist: source differs: {name}")
     if installed is not None:

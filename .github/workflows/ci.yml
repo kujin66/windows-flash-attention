@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    paths: ['flash_attn/cute/**', 'tests/cute/**', 'tests/windows/**', 'tools/windows*', '.github/workflows/**', '.github/actionlint.yaml']
+    paths: ['flash_attn/cute/**', 'tests/cute/**', 'tests/windows/**', 'tools/windows*', '.github/workflows/ci.yml', '.github/workflows/publish-fa4.yml']
   workflow_dispatch:
     inputs:
       run_windows_gpu:

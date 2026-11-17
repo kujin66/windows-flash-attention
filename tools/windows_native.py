@@ -13,7 +13,7 @@ import threading
 import time
 
 REPO = Path(__file__).resolve().parents[1]
-WORK = REPO / 'agent_space' / 'windows-native'
+WORK = REPO / 'build' / 'windows-fa4'
 
 
 def source_fingerprint():
@@ -245,6 +245,9 @@ def validate(args):
                      + f'-cap{args.sequence_cap}')
     folder.mkdir(exist_ok=True)
     write(WORK / 'status.json', dict(state='building', suite=args.suite, folder=str(folder)))
+    if run([sys.executable, REPO / 'tools/ci/assert_dsl_floor.py',
+            REPO / 'flash_attn/cute/pyproject.toml'], folder / 'dependency-floor.log', cwd=folder):
+        raise SystemExit('Native dependency versions do not satisfy pyproject.toml; inspect dependency-floor.log')
     dist = folder / 'builds' / str(time.time_ns())
     code = run([sys.executable, '-m', 'build', '--no-isolation', '--outdir', str(dist)],
                folder / 'build.log', cwd=REPO / 'flash_attn/cute')
