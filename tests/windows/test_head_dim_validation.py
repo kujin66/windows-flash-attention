@@ -17,13 +17,13 @@ def validate():
 
 
 @pytest.mark.parametrize('arch', [8, 12])
-@pytest.mark.parametrize('dq,dv', [(8, 8), (72, 104), (192, 128), (256, 256)])
-def test_supported_aligned_head_dimensions(validate, arch, dq, dv):
+@pytest.mark.parametrize('dq,dv', [(8, 8), (72, 104), (192, 128), (256, 256), (288, 288), (64, 288), (512, 512)])
+def test_positive_aligned_head_dimensions_pass_host_validation(validate, arch, dq, dv):
     validate(dq, dv, arch, 8)
 
 
 @pytest.mark.parametrize('arch', [8, 12])
-@pytest.mark.parametrize('dq,dv', [(4, 4), (148, 148), (288, 288), (64, 4), (64, 148), (64, 288)])
+@pytest.mark.parametrize('dq,dv', [(4, 4), (148, 148), (64, 4), (64, 148), (0, 64), (64, 0), (-8, 64), (64, -8)])
 def test_invalid_head_dimensions_fail_before_dispatch(validate, arch, dq, dv):
     with pytest.raises(AssertionError, match=f'is not supported on SM{arch * 10}'):
         validate(dq, dv, arch, 8)

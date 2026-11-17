@@ -152,10 +152,11 @@ def _validate_head_dims(head_dim: int, head_dim_v: int, compute_capability: int,
             f"head_dim and head_dim_v must be between 8 and 128 and divisible by {alignment}, or (192, 128) for DeepSeek, or (256, 256) for hd256."
         )
     elif compute_capability in [8, 12]:
-        assert (8 <= head_dim <= 256 and 8 <= head_dim_v <= 256
+        # Resource limits depend on the selected tile, not a universal dimension cap.
+        assert (head_dim >= 8 and head_dim_v >= 8
                 and head_dim % alignment == 0 and head_dim_v % alignment == 0), (
             f"(head_dim, head_dim_v)=({head_dim}, {head_dim_v}) is not supported on SM{compute_capability * 10}. "
-            f"head_dim and head_dim_v must be between 8 and 256 and divisible by {alignment}."
+            f"head_dim and head_dim_v must be at least 8 and divisible by {alignment}."
         )
 
 
