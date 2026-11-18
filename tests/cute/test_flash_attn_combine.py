@@ -50,6 +50,8 @@ def check_combine_results(out, lse, out_ref, lse_ref, dtype):
 
 
 def test_splitkv_forwards_explicit_arch(monkeypatch):
+    # This fake target need not match the physical GPU used to run the test.
+    monkeypatch.setenv("FLASH_ATTENTION_NUM_SMS", "1")
     class HitCache:
         def __contains__(self, _key):
             return True

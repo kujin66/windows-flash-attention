@@ -3254,9 +3254,9 @@ def test_flash_attn_bwd_preallocated_outputs(seqlen_q, seqlen_k, d, causal, dtyp
 
     dq_ref, dk_ref, dv_ref = _flash_attn_bwd(q, k, v, out, dout, lse, causal=causal)
 
-    dq = torch.empty_like(q)
-    dk = torch.empty_like(k)
-    dv = torch.empty_like(v)
+    dq = torch.full_like(q, float("nan"))
+    dk = torch.full_like(k, float("nan"))
+    dv = torch.full_like(v, float("nan"))
     dq_out, dk_out, dv_out = _flash_attn_bwd(
         q, k, v, out, dout, lse, causal=causal, dq=dq, dk=dk, dv=dv
     )
@@ -3266,9 +3266,27 @@ def test_flash_attn_bwd_preallocated_outputs(seqlen_q, seqlen_k, d, causal, dtyp
     assert dq_out is dq
     assert dk_out is dk
     assert dv_out is dv
-    assert torch.allclose(dq, dq_ref, atol=1e-5, rtol=1e-5)
+    # Atomic dQ accumulation can round to adjacent storage values across launches.
+    # Keep allocation equivalence tight and check mathematical accuracy separately.
+    previous = torch.nextafter(dq_ref, torch.full_like(dq_ref, -float("inf")))
+    following = torch.nextafter(dq_ref, torch.full_like(dq_ref, float("inf")))
+    adjacent = (dq >= previous) & (dq <= following)
+    assert torch.all(adjacent | torch.isclose(dq, dq_ref, atol=1e-5, rtol=1e-5))
     assert torch.allclose(dk, dk_ref, atol=1e-5, rtol=1e-5)
     assert torch.allclose(dv, dv_ref, atol=1e-5, rtol=1e-5)
+
+    inputs = tuple(t.detach().requires_grad_() for t in (q, k, v))
+    out_ref, _ = attention_ref(*inputs, causal=causal)
+    out_pt, _ = attention_ref(*inputs, causal=causal, upcast=False, reorder_ops=True)
+    gradients_ref = torch.autograd.grad(out_ref, inputs, dout)
+    gradients_pt = torch.autograd.grad(out_pt, inputs, dout)
+    # Use the same gradient error budget as test_flash_attn_output.
+    for expected, baseline, automatic, supplied in zip(
+        gradients_ref, gradients_pt, (dq_ref, dk_ref, dv_ref), (dq, dk, dv)
+    ):
+        for actual in (automatic, supplied):
+            assert torch.isfinite(actual).all()
+            check_tensor_vs_ref("preallocated gradient", actual, expected, baseline)
 
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16])
@@ -5256,7 +5274,8 @@ def test_flash_attn_paged_hd256_sm100_tma_seqused_k(max_seqlen_k_mode, seqlen_q,
     )
 
 
-@pytest.mark.parametrize("head_dim", [4, 148, 288])
+# D288 is an architecture-specific rejection, not an SM8x/SM12x dimension limit.
+@pytest.mark.parametrize("head_dim", [4, 148] + ([288] if IS_SM90 or IS_SM100 or IS_SM110 else []))
 def test_flash_attn_invalid_head_dim(head_dim):
     device = "cuda"
     dtype = torch.bfloat16
@@ -5268,6 +5287,24 @@ def test_flash_attn_invalid_head_dim(head_dim):
 
     with pytest.raises(AssertionError, match=re.escape(f"(head_dim, head_dim_v)=({head_dim}, {head_dim}) is not supported on SM")):
         flash_attn_func(q, k, v)
+
+
+@pytest.mark.skipif(torch.cuda.get_device_capability()[0] not in (8, 12), reason="SM8x/SM12x forward")
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@maybe_fake_tensor_mode(USE_FAKE_TENSOR)
+def test_flash_attn_large_head_dim_explicit_tile_sm8x_sm12x(dtype):
+    from eager_reference import check_against_reference
+
+    torch.manual_seed(20261117)
+    q, k, v = [torch.randn(1, 64, 2, 288, device="cuda", dtype=dtype) for _ in range(3)]
+    out = _flash_attn_fwd(q, k, v, tile_mn=(64, 32))[0]
+    if is_fake_mode():
+        return
+    torch.cuda.synchronize()
+    check_against_reference(
+        (out.flatten(0, 1),), q.flatten(0, 1), k.flatten(0, 1), v.flatten(0, 1),
+        None, (64,), (64,), False, dtype,
+    )
 
 
 # ---------------------------------------------------------------------------
